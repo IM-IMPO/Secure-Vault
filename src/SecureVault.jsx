@@ -110,6 +110,8 @@ const FontStyles = () => (
       .sv-scanline, .sv-decrypt, .sv-fade-in, .sv-toast { animation: none !important; }
     }
 
+    .sv-contact-no-ring:focus,
+    .sv-contact-no-ring:focus-visible { outline: none !important; box-shadow: none !important; }
     .sv-focus:focus-visible {
       outline: 2px solid var(--primary);
       outline-offset: 2px;
@@ -1190,6 +1192,282 @@ function VaultSetupScreen({ onCreate, serverStatus, dataFilePath }) {
   );
 }
 
+
+/* ---------------------------------------------------------------------- */
+/* Vision Board — personal aspirations stored inside the encrypted vault. */
+/* ---------------------------------------------------------------------- */
+
+function VisionBoardView({ items, setItems, toast, onMoveToTrash }) {
+  const [editor, setEditor] = useState(null);
+  const [viewing, setViewing] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [confirmBulkTrash, setConfirmBulkTrash] = useState(false);
+  const [filter, setFilter] = useState("All");
+  const [query, setQuery] = useState("");
+  const blank = { title: "", category: "Personal", description: "", image: "", targetDate: "", status: "In progress" };
+  const categories = ["All", "Personal", "Career", "Finance", "Travel", "Home", "Health", "Learning", "Other"];
+  const visible = (items || []).filter((item) => {
+    const matchesFilter = filter === "All" || item.category === filter;
+    const haystack = `${item.title} ${item.description} ${item.category}`.toLowerCase();
+    return matchesFilter && haystack.includes(query.toLowerCase());
+  });
+  const completed = (items || []).filter((item) => item.status === "Achieved").length;
+  const toggleSelected = (id) => setSelectedIds((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const cancelSelection = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+    setConfirmBulkTrash(false);
+  };
+
+  const save = () => {
+    const title = String(editor?.title || "").trim();
+    if (!title) {
+      toast?.("Give your vision a title first.", "danger");
+      return;
+    }
+    const record = {
+      id: editor.id || `vision-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      title,
+      category: editor.category || "Personal",
+      description: String(editor.description || "").trim(),
+      image: String(editor.image || "").trim(),
+      targetDate: editor.targetDate || "",
+      status: editor.status || "In progress",
+      createdAt: editor.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    setItems((current) => editor.id
+      ? current.map((item) => item.id === editor.id ? record : item)
+      : [record, ...current]);
+    setEditor(null);
+    toast?.(editor.id ? "Vision updated." : "Vision added to your board.", "success");
+  };
+
+  const buttonStyle = {
+    border: "1px solid var(--border)", borderRadius: 9, background: "var(--surface-2)",
+    color: "var(--text)", padding: "8px 11px", minHeight: 36, boxSizing: "border-box", fontSize: 12, lineHeight: 1.2, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0
+  };
+  const fieldStyle = {
+    width: "100%", boxSizing: "border-box", background: "var(--surface-2)",
+    border: "1px solid var(--border)", borderRadius: 9, padding: "10px 11px",
+    color: "var(--text)", fontSize: 13, outline: "none"
+  };
+  return (
+    <div style={{ padding: "30px clamp(18px, 3vw, 42px) 48px", maxWidth: 1500, margin: "0 auto" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 18, flexWrap: "wrap", marginBottom: 24 }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, color: "var(--primary)", fontSize: 11, fontWeight: 700, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 8 }}>
+            <Sparkles size={15} /> Your future, in focus
+          </div>
+          <h1 className="sv-display" style={{ fontSize: 30, letterSpacing: -0.8, margin: "0 0 8px" }}>Vision Board</h1>
+          <p style={{ margin: 0, color: "var(--text-muted)", fontSize: 13.5, lineHeight: 1.6, maxWidth: 580 }}>
+            Keep your dreams visible. Collect inspiration, define what matters, and celebrate each milestone.
+          </p>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 7, flexWrap: "wrap", minWidth: 0 }}>
+          {selectMode && selectedIds.size > 0 && <button onClick={() => setConfirmBulkTrash(true)} style={{ ...buttonStyle, color: "var(--coral)" }}><Trash2 size={13} /> Move {selectedIds.size} to Trash</button>}
+          <button onClick={selectMode ? cancelSelection : () => setSelectMode(true)} style={buttonStyle}>{selectMode ? "Cancel select" : "Select"}</button>
+          <button onClick={() => setEditor({ ...blank })} style={{ ...buttonStyle, background: "var(--primary)", borderColor: "var(--primary)", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 11px", minHeight: 36 }}>
+            <Plus size={14} /> Add vision
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 24 }}>
+        {[
+          { label: "All visions", value: (items || []).length, icon: ImageIcon2, color: "var(--primary)" },
+          { label: "In progress", value: (items || []).filter((item) => item.status !== "Achieved").length, icon: Target, color: "var(--amber)" },
+          { label: "Achieved", value: completed, icon: CheckCircle2, color: "var(--mint)" }
+        ].map((stat) => (
+          <div key={stat.label} style={{ border: "1px solid var(--border)", borderRadius: 13, padding: "15px 16px", background: "var(--surface)", display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 11, display: "grid", placeItems: "center", color: stat.color, background: "var(--surface-2)" }}><stat.icon size={18} /></div>
+            <div><div style={{ fontSize: 22, fontWeight: 700 }} className="sv-display">{stat.value}</div><div style={{ color: "var(--text-muted)", fontSize: 11.5 }}>{stat.label}</div></div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
+        <div style={{ flex: "1 1 220px", position: "relative" }}>
+          <Search size={15} color="var(--text-muted)" style={{ position: "absolute", left: 12, top: 12 }} />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search your visions..." style={{ ...fieldStyle, paddingLeft: 36 }} />
+        </div>
+        <select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ ...fieldStyle, width: "auto", minWidth: 145 }}>
+          {categories.map((category) => <option key={category} value={category}>{category === "All" ? "All categories" : category}</option>)}
+        </select>
+      </div>
+
+      {visible.length === 0 ? (
+        <div style={{ border: "1px dashed var(--border)", borderRadius: 18, padding: "54px 22px", textAlign: "center", background: "linear-gradient(145deg, var(--surface), var(--surface-2))" }}>
+          <div style={{ width: 58, height: 58, margin: "0 auto 16px", borderRadius: 18, display: "grid", placeItems: "center", background: "var(--primary-soft)", color: "var(--primary)" }}><Sparkles size={26} /></div>
+          <h2 className="sv-display" style={{ fontSize: 20, margin: "0 0 8px" }}>{query || filter !== "All" ? "No matching visions" : "Start imagining what's possible"}</h2>
+          <p style={{ color: "var(--text-muted)", fontSize: 13, maxWidth: 440, margin: "0 auto 20px", lineHeight: 1.7 }}>
+            {query || filter !== "All" ? "Try another search or category." : "Add a goal, a dream destination, a future milestone, or anything you want to work toward. An image URL is optional."}
+          </p>
+          {!query && filter === "All" && <button onClick={() => setEditor({ ...blank })} style={{ ...buttonStyle, background: "var(--primary)", borderColor: "var(--primary)", color: "#fff" }}><Plus size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />Create your first vision</button>}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 245px), 1fr))", gap: 16, alignItems: "stretch" }}>
+          {visible.map((item) => (
+            <article key={item.id}
+              onClick={selectMode ? () => toggleSelected(item.id) : () => setViewing(item)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectMode ? toggleSelected(item.id) : setViewing(item); } }}
+              style={{ minWidth: 0, overflow: "hidden", border: selectedIds.has(item.id) ? "1px solid var(--primary)" : "1px solid var(--border)", borderLeft: selectedIds.has(item.id) ? "4px solid var(--primary)" : "1px solid var(--border)", borderRadius: 15, background: selectedIds.has(item.id) ? "var(--primary-soft)" : "var(--surface)", display: "flex", flexDirection: "column", transition: "transform .18s ease, border-color .18s ease, background .18s ease", cursor: "pointer", position: "relative", boxShadow: selectedIds.has(item.id) ? "0 0 0 1px var(--primary-soft)" : "none" }}>
+              {selectMode && <div style={{ position: "absolute", zIndex: 2, top: 10, right: 10, width: 25, height: 25, borderRadius: "50%", display: "grid", placeItems: "center", background: selectedIds.has(item.id) ? "var(--primary)" : "rgba(10,15,22,.72)", color: "#fff", border: selectedIds.has(item.id) ? "1px solid var(--primary)" : "1px solid rgba(255,255,255,.45)" }}>{selectedIds.has(item.id) ? <CheckCircle2 size={17} /> : <span style={{ width: 7, height: 7, borderRadius: "50%", border: "1px solid rgba(255,255,255,.8)" }} />}</div>}
+              <div style={{ height: 150, flexShrink: 0, position: "relative", overflow: "hidden", background: "linear-gradient(135deg, var(--primary-soft), var(--surface-3))" }}>
+                {item.image ? <img src={item.image} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "grid", placeItems: "center", color: "var(--primary)" }}><Sparkles size={36} opacity={0.8} /></div>}
+                <span style={{ position: "absolute", top: 11, left: 11, borderRadius: 20, padding: "5px 9px", fontSize: 10.5, fontWeight: 700, background: "rgba(10,15,22,.78)", color: "#fff", backdropFilter: "blur(8px)" }}>{item.category}</span>
+                {item.status === "Achieved" && <span style={{ position: "absolute", top: 11, right: 11, borderRadius: 20, padding: "5px 9px", fontSize: 10.5, fontWeight: 700, background: "#0d8b63", color: "#fff" }}>✓ Achieved</span>}
+              </div>
+              <div style={{ padding: 15, display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+                <h3 className="sv-display" style={{ fontSize: 16, lineHeight: 1.3, margin: "0 0 8px", overflowWrap: "anywhere", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{item.title}</h3>
+                <p style={{ color: "var(--text-muted)", fontSize: 12.5, lineHeight: 1.6, margin: "0 0 12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", maxHeight: "4.8em", minHeight: "4.8em" }}>{item.description || "A vision you're working toward."}</p>
+                {!selectMode && <div style={{ color: "var(--primary)", fontSize: 11, fontWeight: 600, margin: "-4px 0 10px" }}>Click to read full vision →</div>}
+                <div style={{ borderTop: "1px solid var(--border)", paddingTop: 11, display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 12 }}>
+                  <span style={{ color: "var(--text-muted)", fontSize: 11.5 }}>{item.targetDate ? `Target: ${item.targetDate}` : "No target date"}</span>
+                  <span style={{ color: item.status === "Achieved" ? "var(--mint)" : "var(--amber)", fontSize: 10.5, fontWeight: 700 }}>{item.status}</span>
+                </div>
+                <div style={{ display: "flex", gap: 7 }}>
+                  <button onClick={(e) => { e.stopPropagation(); if (selectMode) { toggleSelected(item.id); return; } setItems((current) => current.map((v) => v.id === item.id ? { ...v, status: v.status === "Achieved" ? "In progress" : "Achieved", updatedAt: new Date().toISOString() } : v)); }} title={item.status === "Achieved" ? "Mark in progress" : "Mark achieved"} style={{ ...buttonStyle, flex: 1, padding: "8px 9px", color: item.status === "Achieved" ? "var(--text-muted)" : "var(--mint)" }}>
+                    <CheckCircle2 size={13} style={{ verticalAlign: "middle", marginRight: 5 }} />{item.status === "Achieved" ? "Reopen" : "Achieved"}
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); if (selectMode) { toggleSelected(item.id); return; } setEditor({ ...blank, ...item, image: item.image || "", title: item.title || "", description: item.description || "", category: item.category || "Personal", status: item.status || "In progress", targetDate: item.targetDate || "" }); }} title={selectMode ? "Toggle selection" : "Edit vision"} style={{ ...buttonStyle, padding: "8px 10px" }}>{selectMode ? <CheckCircle2 size={14} /> : <Pencil size={14} />}</button>
+                  {!selectMode && <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(item); }} title="Move vision to Trash" style={{ ...buttonStyle, padding: "8px 10px", color: "var(--coral)" }}><Trash2 size={14} /></button>}
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {confirmBulkTrash && (
+        <ConfirmDialog
+          title="Move visions to Trash"
+          message={`Move ${selectedIds.size} selected vision${selectedIds.size === 1 ? "" : "s"} to Trash? You can restore them within ${TRASH_RETENTION_DAYS} days.`}
+          confirmLabel="Move to Trash"
+          danger
+          onCancel={() => setConfirmBulkTrash(false)}
+          onConfirm={() => {
+            const selectedItems = (items || []).filter((item) => selectedIds.has(item.id));
+            selectedItems.forEach((item) => onMoveToTrash?.(item));
+            toast?.(`${selectedItems.length} vision${selectedItems.length === 1 ? "" : "s"} moved to Trash.`, "success");
+            cancelSelection();
+          }}
+        />
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Move vision to Trash"
+          message={`Move "${confirmDelete.title}" to Trash? You can restore it within ${TRASH_RETENTION_DAYS} days.`}
+          confirmLabel="Move to Trash"
+          danger
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            onMoveToTrash?.(confirmDelete);
+            setConfirmDelete(null);
+          }}
+        />
+      )}
+
+      {viewing && !selectMode && (
+        <Modal title={viewing.title} onClose={() => setViewing(null)} width={620}>
+          {viewing.image && <img src={viewing.image} alt={viewing.title} style={{ display: "block", width: "100%", maxHeight: 300, objectFit: "cover", borderRadius: 12, marginBottom: 16 }} />}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            <span style={{ borderRadius: 20, padding: "5px 9px", fontSize: 11, fontWeight: 700, background: "var(--surface-2)", color: "var(--text-muted)" }}>{viewing.category}</span>
+            <span style={{ color: viewing.status === "Achieved" ? "var(--mint)" : "var(--amber)", fontSize: 11, fontWeight: 700 }}>{viewing.status}</span>
+            {viewing.targetDate && <span style={{ color: "var(--text-muted)", fontSize: 11 }}>Target: {viewing.targetDate}</span>}
+          </div>
+          <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.75, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "50vh", overflowY: "auto", paddingRight: 4 }}>
+            {viewing.description || "A vision you're working toward."}
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 9, marginTop: 18 }}>
+            <button onClick={() => { setEditor({ ...blank, ...viewing, image: viewing.image || "", title: viewing.title || "", description: viewing.description || "", category: viewing.category || "Personal", status: viewing.status || "In progress", targetDate: viewing.targetDate || "" }); setViewing(null); }} style={buttonStyle}><Pencil size={13} style={{ verticalAlign: "middle", marginRight: 5 }} /> Edit vision</button>
+            <button onClick={() => setViewing(null)} style={buttonStyle}>Close</button>
+          </div>
+        </Modal>
+      )}
+
+      {editor && (
+        <Modal title={editor.id ? "Edit vision" : "Add a vision"} onClose={() => setEditor(null)} width={560}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 13 }}>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <Field label="Title *"><input autoFocus value={editor.title} onChange={(e) => setEditor({ ...editor, title: e.target.value })} placeholder="e.g. Build my dream home" style={fieldStyle} /></Field>
+            </div>
+            <Field label="Category"><select value={editor.category} onChange={(e) => setEditor({ ...editor, category: e.target.value })} style={fieldStyle}>{categories.filter((c) => c !== "All").map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
+            <Field label="Status"><select value={editor.status} onChange={(e) => setEditor({ ...editor, status: e.target.value })} style={fieldStyle}><option>In progress</option><option>Achieved</option></select></Field>
+            <div style={{ gridColumn: "1 / -1" }}><Field label="Description"><textarea rows={3} value={editor.description} onChange={(e) => setEditor({ ...editor, description: e.target.value })} placeholder="Why does this matter to you? What's your first step?" style={{ ...fieldStyle, resize: "vertical" }} /></Field></div>
+            <div style={{ gridColumn: "1 / -1", display: "grid", gap: 10 }}>
+              <Field label="Choose an image from your computer (optional)">
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: 14, border: "1px dashed var(--border)", borderRadius: 12, background: "var(--surface-1)" }}>
+                  <label style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, minHeight: 40, padding: "0 15px", borderRadius: 9, background: "var(--accent, #4778f5)", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,.15)", transition: "filter .15s" }}>
+                    <ImageIcon2 size={16} /> Browse images
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        if (!file.type.startsWith("image/")) {
+                          toast?.("Please choose an image file.", "danger");
+                          e.target.value = "";
+                          return;
+                        }
+                        if (file.size > 5 * 1024 * 1024) {
+                          toast?.("Choose an image smaller than 5 MB.", "danger");
+                          e.target.value = "";
+                          return;
+                        }
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          if (typeof reader.result === "string") {
+                            setEditor((current) => current ? { ...current, image: reader.result } : current);
+                          }
+                        };
+                        reader.onerror = () => toast?.("Could not read that image. Please try another file.", "danger");
+                        reader.readAsDataURL(file);
+                        e.target.value = "";
+                      }}
+                      style={{ display: "none" }}
+                    />
+                  </label>
+                  <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                    <span style={{ color: "var(--text-primary)", fontSize: 12, fontWeight: 600 }}>{String(editor.image || "").startsWith("data:image/") ? "Image selected" : "No image selected"}</span>
+                    <span style={{ color: "var(--text-muted)", fontSize: 11 }}>PNG, JPG, GIF or WebP · up to 5 MB</span>
+                  </div>
+                </div>
+              </Field>
+              <div style={{ color: "var(--text-muted)", fontSize: 12 }}>Image files only · maximum 5 MB. The image is saved with your vault data.</div>
+              {editor.image && (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+                  <img src={editor.image} alt="Vision preview" style={{ width: 88, height: 64, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border)" }} />
+                  <button type="button" onClick={() => setEditor({ ...editor, image: "" })} style={{ ...buttonStyle, color: "var(--coral)" }}>Remove image</button>
+                </div>
+              )}
+              <Field label="Or use an image URL">
+                <input value={String(editor.image || "").startsWith("data:image/") ? "" : editor.image} onChange={(e) => setEditor({ ...editor, image: e.target.value })} placeholder="https://example.com/inspiration.jpg" style={fieldStyle} />
+              </Field>
+            </div>
+            <Field label="Target date (optional)"><input type="date" value={editor.targetDate || ""} onChange={(e) => setEditor({ ...editor, targetDate: e.target.value })} style={fieldStyle} /></Field>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 9, marginTop: 10 }}>
+            <button onClick={() => setEditor(null)} style={buttonStyle}>Cancel</button>
+            <button onClick={save} style={{ ...buttonStyle, background: "var(--primary)", borderColor: "var(--primary)", color: "#fff" }}>{editor.id ? "Save changes" : "Add vision"}</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+
 /* ---------------------------------------------------------------------- */
 /* Sidebar                                                                 */
 /* ---------------------------------------------------------------------- */
@@ -1201,6 +1479,7 @@ const NAV = [
   { key: "finance", label: "Finance", icon: Wallet },
   { key: "budgets", label: "Budgets", icon: PiggyBank },
   { key: "goals", label: "Savings Goals", icon: Target },
+  { key: "vision", label: "Vision Board", icon: Sparkles },
   { key: "planner", label: "Planner", icon: CalendarDays },
   { key: "contacts", label: "Contacts", icon: Users },
   { key: "trash", label: "Trash", icon: Trash2 },
@@ -1619,6 +1898,7 @@ function PasswordsView({ passwords, openModal, deletePassword, logActivity, toas
       <TopBar title="Passwords" subtitle={`${passwords.length} saved credentials`}
         right={<><Button variant="subtle" onClick={() => { setSelectMode((v) => !v); if (selectMode) setSelected(new Set()); }}>{selectMode ? "Cancel select" : "Select"}</Button>{selectMode && selected.size > 0 && <Button variant="danger" onClick={() => { selected.forEach((id) => deletePassword(id)); setSelected(new Set()); setSelectMode(false); }}>Delete selected ({selected.size})</Button>}<Button icon={Plus} onClick={() => openModal("password-add")}>Add password</Button></>} />
       <div style={{ padding: "0 28px 28px" }}>
+        {selectMode && <div style={{ marginBottom: 10, fontSize: 12, color: "var(--text-muted)" }}>Click any password row to select it. Selected rows are highlighted.</div>}
         <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
           <div style={{ position: "relative", flex: "1 1 220px" }}>
             <Search size={14} style={{ position: "absolute", left: 11, top: 11, color: "var(--text-faint)" }} />
@@ -1654,8 +1934,29 @@ function PasswordsView({ passwords, openModal, deletePassword, logActivity, toas
                     const isRevealed = !!revealed[p.id];
                     const strength = scorePassword(p.password);
                     return (
-                      <tr key={p.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                        <td style={{ padding: "12px 8px" }}>{selectMode && <input type="checkbox" checked={selected.has(p.id)} onChange={(e) => { const ns = new Set(selected); if (e.target.checked) ns.add(p.id); else ns.delete(p.id); setSelected(ns); }} />}</td>
+                      <tr
+                        key={p.id}
+                        onClick={() => {
+                          if (!selectMode) return;
+                          setSelected((current) => {
+                            const next = new Set(current);
+                            if (next.has(p.id)) next.delete(p.id);
+                            else next.add(p.id);
+                            return next;
+                          });
+                        }}
+                        aria-selected={selectMode && selected.has(p.id)}
+                        style={{
+                          borderBottom: "1px solid var(--border)",
+                          cursor: selectMode ? "pointer" : "default",
+                          background: selected.has(p.id) ? "var(--primary-soft, rgba(79, 124, 255, 0.16))" : "transparent",
+                          boxShadow: selected.has(p.id) ? "inset 3px 0 0 var(--primary, #4f7cff)" : "none",
+                          transition: "background 140ms ease, box-shadow 140ms ease"
+                        }}
+                      >
+                        <td style={{ padding: "12px 8px", width: 24 }}>
+                          {selectMode && selected.has(p.id) && <CheckCircle2 size={16} style={{ color: "var(--primary, #4f7cff)", display: "block" }} />}
+                        </td>
                         <td style={{ padding: "12px 16px" }}>
                           <div style={{ fontWeight: 600, fontSize: 13 }}>{p.title}</div>
                           {p.url && <div style={{ fontSize: 11, color: "var(--text-faint)", display: "flex", alignItems: "center", gap: 4 }}><Globe size={10} /> {p.url.replace(/^https?:\/\//, "")}</div>}
@@ -1680,7 +1981,7 @@ function PasswordsView({ passwords, openModal, deletePassword, logActivity, toas
                           </div>
                         </td>
                         <td style={{ padding: "12px 16px", fontSize: 12, color: "var(--text-faint)" }} className="sv-mono">{fmtDate(p.updatedAt)}</td>
-                        <td style={{ padding: "12px 16px" }}>
+                        <td style={{ padding: "12px 16px" }} onClick={(e) => e.stopPropagation()}>
                           <div style={{ display: "flex", gap: 5 }}>
                             {p.url && <IconBtn icon={ExternalLink} size={12} onClick={() => window.open(p.url, "_blank")} title="Open website" />}
                             <IconBtn icon={Pencil} size={12} onClick={() => openModal("password-edit", p)} title="Edit" />
@@ -1848,10 +2149,10 @@ function NotesView({ notes, openModal, deleteNote, togglePin, toggleArchive, loc
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px,1fr))", gap: 14 }}>
             {filtered.map((n) => (
-              <Card key={n.id} style={{ display: "flex", flexDirection: "column", gap: 10, position: "relative" }}>
-        {selectMode && <input type="checkbox" checked={selected.has(n.id)} onChange={(e) => { const ns = new Set(selected); if (e.target.checked) ns.add(n.id); else ns.delete(n.id); setSelected(ns); }} style={{ position: "absolute", top: 10, left: 10, zIndex: 2 }} />}
+              <Card key={n.id} style={{ display: "flex", flexDirection: "column", gap: 10, position: "relative", cursor: selectMode ? "pointer" : "default", background: (selectMode && selected.has(n.id)) ? "var(--primary-soft, rgba(79, 124, 255, 0.16))" : "var(--surface)", boxShadow: (selectMode && selected.has(n.id)) ? "inset 3px 0 0 var(--primary, #4f7cff)" : "none", borderColor: (selectMode && selected.has(n.id)) ? "var(--primary, #4f7cff)" : "var(--border)", transition: "background 140ms ease, box-shadow 140ms ease, border-color 140ms ease" }}>
+        {selectMode && <div style={{ position: "absolute", top: 10, left: 10, zIndex: 2, color: selected.has(n.id) ? "var(--primary, #4f7cff)" : "var(--text-faint)" }}>{selected.has(n.id) ? <CheckCircle2 size={18} /> : <div style={{ width: 16, height: 16, borderRadius: "50%", border: "1.5px solid var(--text-faint)" }} />}</div>}
                 <button
-                  onClick={() => openModal("note-view", n)}
+                  onClick={(e) => { e.stopPropagation(); if (selectMode) { setSelected((current) => { const next = new Set(current); if (next.has(n.id)) next.delete(n.id); else next.add(n.id); return next; }); return; } openModal("note-view", n); }}
                   className="sv-focus"
                   style={{ display: "flex", flexDirection: "column", gap: 10, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit" }}
                   title="Click to view full note"
@@ -2235,10 +2536,10 @@ function FinanceView({ transactions, goals, generalSavings, savingsAdjustment, o
               </thead>
               <tbody>
                 {filteredTx.map((t) => (
-                  <tr key={t.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                    <td style={{ padding: "12px 8px" }}>{selectMode && <input type="checkbox" checked={selected.has(t.id)} onChange={(e) => { const ns = new Set(selected); if (e.target.checked) ns.add(t.id); else ns.delete(t.id); setSelected(ns); }} />}</td>
+                  <tr key={t.id} onClick={() => { if (!selectMode) return; setSelected((current) => { const next = new Set(current); if (next.has(t.id)) next.delete(t.id); else next.add(t.id); return next; }); }} aria-selected={selectMode && selected.has(t.id)} style={{ borderBottom: "1px solid var(--border)", cursor: selectMode ? "pointer" : "default", background: selected.has(t.id) ? "var(--primary-soft, rgba(79, 124, 255, 0.16))" : "transparent", boxShadow: selected.has(t.id) ? "inset 3px 0 0 var(--primary, #4f7cff)" : "none", transition: "background 140ms ease, box-shadow 140ms ease" }}>
+                    <td style={{ padding: "12px 8px", width: 32 }}>{selectMode && (selected.has(t.id) ? <CheckCircle2 size={16} style={{ color: "var(--primary, #4f7cff)", display: "block" }} /> : <div style={{ width: 15, height: 15, borderRadius: "50%", border: "1.5px solid var(--text-faint)" }} />)}</td>
                     <td style={{ padding: "12px 16px", fontSize: 13, fontWeight: 600 }}>
-                      <button onClick={() => openModal("transaction-view", t)} className="sv-focus" style={{
+                      <button onClick={(e) => { e.stopPropagation(); if (selectMode) { setSelected((current) => { const next = new Set(current); if (next.has(t.id)) next.delete(t.id); else next.add(t.id); return next; }); return; } openModal("transaction-view", t); }} className="sv-focus" style={{
                         display: "flex", alignItems: "center", gap: 8, background: "none", border: "none",
                         padding: 0, cursor: "pointer", color: "inherit", textAlign: "left"
                       }}>
@@ -2256,8 +2557,8 @@ function FinanceView({ transactions, goals, generalSavings, savingsAdjustment, o
                     </td>
                     <td style={{ padding: "12px 16px" }}>
                       <div style={{ display: "flex", gap: 5 }}>
-                        <IconBtn icon={Pencil} size={12} onClick={() => openModal("transaction-edit", t)} title="Edit" />
-                        <IconBtn icon={Trash2} size={12} danger onClick={() => setConfirmDelete(t)} title="Delete" />
+                        <IconBtn icon={Pencil} size={12} onClick={() => { if (selectMode) return; openModal("transaction-edit", t); }} title="Edit" />
+                        <IconBtn icon={Trash2} size={12} danger onClick={() => { if (selectMode) return; setConfirmDelete(t); }} title="Delete" />
                       </div>
                     </td>
                   </tr>
@@ -3607,21 +3908,21 @@ function ContactsView({ contacts, openModal, deleteContact, toggleFavorite, onIm
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px,1fr))", gap: 16 }}>
             {filtered.map((c) => (
-              <Card key={c.id} style={{ padding: 0, overflow: "hidden", position: "relative" }}>
-                {selectMode && <input type="checkbox" checked={selected.has(c.id)} onChange={(e) => { const ns = new Set(selected); if (e.target.checked) ns.add(c.id); else ns.delete(c.id); setSelected(ns); }} style={{ position: "absolute", top: 8, left: 8, zIndex: 2 }} />}
+              <Card key={c.id} onClick={() => { if (!selectMode) return; setSelected((current) => { const next = new Set(current); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; }); }} style={{ padding: 0, overflow: "hidden", position: "relative", cursor: selectMode ? "pointer" : "default", background: selected.has(c.id) ? "var(--primary-soft, rgba(79, 124, 255, 0.16))" : "var(--surface)", border: selected.has(c.id) ? "1px solid var(--primary, #4f7cff)" : "1px solid transparent", boxShadow: selected.has(c.id) ? "inset 3px 0 0 var(--primary, #4f7cff)" : "none", transition: "background 140ms ease, box-shadow 140ms ease" }}>
+                {selectMode && <div style={{ position: "absolute", top: 8, left: 8, zIndex: 2, color: selected.has(c.id) ? "var(--primary, #4f7cff)" : "var(--text-faint)" }}>{selected.has(c.id) ? <CheckCircle2 size={18} /> : <div style={{ width: 16, height: 16, borderRadius: "50%", border: "1.5px solid var(--text-faint)" }} />}</div>}
                 <div style={{ position: "relative" }}>
-                  <button onClick={() => openModal("contact-view", c)} className="sv-focus" style={{ display: "block", width: "100%", border: "none", padding: 0, cursor: "pointer", background: "none" }}>
+                  <button onClick={(e) => { e.stopPropagation(); if (selectMode) { setSelected((current) => { const next = new Set(current); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; }); return; } openModal("contact-view", c); }} className="sv-contact-no-ring" style={{ display: "block", width: "100%", border: "none", padding: 0, cursor: "pointer", background: "none" }}>
                     <ContactBanner contact={c} />
                   </button>
                   <div style={{ position: "absolute", left: 16, bottom: -28 }}>
-                    <button onClick={() => openModal("contact-view", c)} className="sv-focus" style={{ border: "none", padding: 0, cursor: "pointer", background: "none", borderRadius: "50%" }}>
+                    <button onClick={() => openModal("contact-view", c)} className="sv-contact-no-ring" style={{ border: "none", padding: 0, cursor: "pointer", background: "none", borderRadius: "50%" }}>
                       <ContactAvatar contact={c} size={60} />
                     </button>
                   </div>
                   <button
                     onClick={() => toggleFavorite(c.id)}
                     title={c.favorite ? "Unfavorite" : "Favorite"}
-                    className="sv-focus"
+                    className="sv-contact-no-ring"
                     style={{
                       position: "absolute", top: 8, right: 8, width: 26, height: 26, borderRadius: 7,
                       background: "rgba(11,15,20,0.55)", border: "1px solid rgba(255,255,255,0.15)",
@@ -3633,7 +3934,7 @@ function ContactsView({ contacts, openModal, deleteContact, toggleFavorite, onIm
                 </div>
 
                 <div style={{ padding: "36px 16px 16px" }}>
-                  <button onClick={() => openModal("contact-view", c)} className="sv-focus" style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit" }}>
+                  <button onClick={() => openModal("contact-view", c)} className="sv-contact-no-ring" style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit" }}>
                     <div style={{ fontWeight: 600, fontSize: 14.5, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
                     {(c.jobTitle || c.company) && (
                       <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -4017,6 +4318,7 @@ const TRASH_TYPE_META = {
   goal: { icon: Target, label: "Goal", tone: "primary" },
   event: { icon: CalendarDays, label: "Event", tone: "primary" },
   contact: { icon: Users, label: "Contact", tone: "primary" },
+  vision: { icon: Sparkles, label: "Vision", tone: "primary" },
 };
 
 function trashEntryTitle(entry) {
@@ -4029,6 +4331,7 @@ function trashEntryTitle(entry) {
     case "goal": return it.title;
     case "event": return it.title;
     case "contact": return it.name;
+    case "vision": return it.title;
     default: return "Item";
   }
 }
@@ -4042,6 +4345,7 @@ function trashEntrySubtitle(entry) {
     case "goal": return `${fmtMoney(it.currentAmount)} of ${fmtMoney(it.targetAmount)}`;
     case "event": return fmtDate(it.date);
     case "contact": return it.category;
+    case "vision": return `${it.category || "Personal"} · ${it.status || "In progress"}`;
     default: return "";
   }
 }
@@ -4084,8 +4388,8 @@ function TrashView({ trash, onRestore, onDeleteForever, onEmptyTrash }) {
                 const age = trashAgeDays(entry.deletedAt);
                 const daysLeft = Math.max(0, TRASH_RETENTION_DAYS - age);
                 return (
-                  <div key={entry.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
-                    {selectMode && <input type="checkbox" checked={selected.has(entry.id)} onChange={(e) => { const ns = new Set(selected); if (e.target.checked) ns.add(entry.id); else ns.delete(entry.id); setSelected(ns); }} />}
+                  <div key={entry.id} onClick={() => { if (!selectMode) return; setSelected((current) => { const next = new Set(current); if (next.has(entry.id)) next.delete(entry.id); else next.add(entry.id); return next; }); }} aria-selected={selectMode && selected.has(entry.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: "1px solid var(--border)", cursor: selectMode ? "pointer" : "default", background: selected.has(entry.id) ? "var(--primary-soft, rgba(79, 124, 255, 0.16))" : "transparent", boxShadow: selected.has(entry.id) ? "inset 3px 0 0 var(--primary, #4f7cff)" : "none", transition: "background 140ms ease, box-shadow 140ms ease" }}>
+                    {selectMode && (selected.has(entry.id) ? <CheckCircle2 size={16} style={{ color: "var(--primary, #4f7cff)", flexShrink: 0 }} /> : <div style={{ width: 15, height: 15, borderRadius: "50%", border: "1.5px solid var(--text-faint)", flexShrink: 0 }} />)}
                     <div style={{ width: 30, height: 30, borderRadius: 8, background: "var(--surface-2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                       <Icon size={14} color="var(--text-faint)" />
                     </div>
@@ -4098,8 +4402,8 @@ function TrashView({ trash, onRestore, onDeleteForever, onEmptyTrash }) {
                       <div style={{ fontSize: 10.5, color: daysLeft <= 5 ? "var(--coral)" : "var(--text-faint)" }}>{daysLeft}d left</div>
                     </div>
                     <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
-                      <IconBtn icon={RotateCcw} onClick={() => onRestore(entry.id)} title="Restore" />
-                      <IconBtn icon={Trash2} danger onClick={() => setConfirmDeleteForever(entry)} title="Delete forever" />
+                      <IconBtn icon={RotateCcw} onClick={() => { if (selectMode) return; onRestore(entry.id); }} title="Restore" />
+                      <IconBtn icon={Trash2} danger onClick={() => { if (selectMode) return; setConfirmDeleteForever(entry); }} title="Delete forever" />
                     </div>
                   </div>
                 );
@@ -5028,6 +5332,7 @@ export default function App() {
   const [transactions, setTransactions] = useState([]);
   const [budgets, setBudgets] = useState([]);
   const [goals, setGoals] = useState([]);
+  const [visionItems, setVisionItems] = useState([]);
   const [generalSavings, setGeneralSavings] = useState({ balance: 0, history: [] });
   // Manual correction applied on top of the computed "new money" savings
   // total shown in Finance — lets the figure be fixed directly when it's
@@ -5118,6 +5423,7 @@ export default function App() {
     setTransactions(data.transactions || initialTransactions);
     setBudgets(data.budgets || initialBudgets);
     setGoals(data.goals || initialGoals);
+    setVisionItems(Array.isArray(data.visionItems) ? data.visionItems : []);
     setGeneralSavings(data.generalSavings || { balance: 0, history: [] });
     setSavingsAdjustment(data.savingsAdjustment || 0);
     setEvents(data.events || initialEvents);
@@ -5136,7 +5442,7 @@ export default function App() {
   const handleCreateVault = async (masterPassword) => {
     const initialData = {
       passwords: initialPasswords, notes: initialNotes, transactions: initialTransactions,
-      budgets: initialBudgets, goals: initialGoals, generalSavings: { balance: 0, history: [] }, savingsAdjustment: 0, events: initialEvents, contacts: initialContacts, trash: [], activity: initialActivity, sessions: SESSIONS,
+      budgets: initialBudgets, goals: initialGoals, visionItems: [], generalSavings: { balance: 0, history: [] }, savingsAdjustment: 0, events: initialEvents, contacts: initialContacts, trash: [], activity: initialActivity, sessions: SESSIONS,
       settings: DEFAULT_SETTINGS, auth: DEFAULT_AUTH, theme: "dark",
     };
     const { envelope: newEnvelope, vaultKeyBytes } = await createVaultEnvelope(masterPassword, initialData);
@@ -5185,6 +5491,7 @@ export default function App() {
     setTransactions([]);
     setBudgets([]);
     setGoals([]);
+    setVisionItems([]);
     setGeneralSavings({ balance: 0, history: [] });
     setSavingsAdjustment(0);
     setEvents([]);
@@ -5206,7 +5513,7 @@ export default function App() {
     if (!booted || locked || serverStatus !== "connected" || !vaultKeyRef.current || !envelope || integrityIssue) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
-      const dataObj = { passwords, notes, transactions, budgets, goals, generalSavings, savingsAdjustment, events, contacts, trash, activity, sessions, settings, auth, theme };
+      const dataObj = { passwords, notes, transactions, budgets, goals, visionItems, generalSavings, savingsAdjustment, events, contacts, trash, activity, sessions, settings, auth, theme };
       const dataEnc = await encryptVaultData(vaultKeyRef.current, dataObj);
       const newEnvelope = { ...envelope, data: dataEnc, updatedAt: new Date().toISOString() };
       setEnvelope(newEnvelope);
@@ -5221,7 +5528,7 @@ export default function App() {
     // envelope intentionally excluded — it's updated as a *result* of this
     // effect, not a trigger for it, to avoid a save loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [passwords, notes, transactions, budgets, goals, generalSavings, savingsAdjustment, events, contacts, trash, activity, sessions, settings, auth, theme, booted, locked, serverStatus, integrityIssue]);
+  }, [passwords, notes, transactions, budgets, goals, visionItems, generalSavings, savingsAdjustment, events, contacts, trash, activity, sessions, settings, auth, theme, booted, locked, serverStatus, integrityIssue]);
 
   // ---- Reminders sync: keeps the plaintext reminders index current so ----
   // alarms can fire while locked or minimized to the tray. Guarded to only
@@ -5572,6 +5879,7 @@ export default function App() {
       case "goal": setGoals((gs) => [entry.item, ...gs]); break;
       case "event": setEvents((es) => [entry.item, ...es]); break;
       case "contact": setContacts((cs) => [entry.item, ...cs]); break;
+      case "vision": setVisionItems((vs) => [entry.item, ...vs]); break;
       default: break;
     }
     toast(`${TRASH_TYPE_META[entry.type]?.label || "Item"} restored.`, "success");
@@ -5864,6 +6172,11 @@ export default function App() {
         {view === "goals" && (
           <GoalsView goals={goals} generalSavings={generalSavings} openModal={openModal} deleteGoal={deleteGoal} />
         )}
+        {view === "vision" && <VisionBoardView items={visionItems} setItems={setVisionItems} toast={toast} onMoveToTrash={(vision) => {
+          setVisionItems((vs) => vs.filter((v) => v.id !== vision.id));
+          moveToTrash("vision", vision);
+          toast("Vision moved to Trash.", "success");
+        }} />}
         {view === "planner" && (
           <PlannerView events={events} openModal={openModal} deleteEvent={deleteEvent} deleteOccurrence={deleteOccurrence} toggleEventComplete={toggleEventComplete} />
         )}
