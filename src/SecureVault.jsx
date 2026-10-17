@@ -327,6 +327,31 @@ async function backupNow() {
   }
 }
 
+/**
+ * Keeps the plaintext reminders index in sync so alarms can fire while the
+ * vault is locked or the app is just sitting in the tray. Deliberately
+ * sends only what a reminder needs to display — title, date, time,
+ * category, recurrence, and per-occurrence completion. Location, notes,
+ * and everything else never leave the encrypted vault.
+ */
+async function syncReminders(events) {
+  try {
+    const reminders = (events || []).map((e) => ({
+      id: e.id, title: e.title, date: e.date, time: e.allDay ? null : (e.time || null),
+      allDay: !!e.allDay, category: e.category, recurrence: e.recurrence || "none",
+      completedDates: e.completedDates || [],
+    }));
+    await fetch(`${SV_API}/api/reminders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reminders }),
+      signal: AbortSignal.timeout(3000),
+    });
+  } catch {
+    // Non-critical — the next successful sync will catch up.
+  }
+}
+
 /** Checks the vault file's integrity against what the server last legitimately wrote. */
 async function checkIntegrity() {
   try {
@@ -797,12 +822,13 @@ function Select({ children, ...props }) {
   return <select {...props} className="sv-focus" style={{ ...inputStyle, cursor: "pointer" }}>{children}</select>;
 }
 
-function ConfirmDialog({ title, message, confirmLabel = "Confirm", danger, onConfirm, onCancel }) {
+function ConfirmDialog({ title, message, confirmLabel = "Confirm", secondaryLabel, danger, onConfirm, onSecondary, onCancel }) {
   return (
     <Modal title={title} onClose={onCancel} width={400}>
       <p style={{ color: "var(--text-muted)", fontSize: 13.5, lineHeight: 1.6, margin: "0 0 18px" }}>{message}</p>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
         <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+        {secondaryLabel && <Button variant="subtle" onClick={onSecondary}>{secondaryLabel}</Button>}
         <Button variant={danger ? "danger" : "primary"} onClick={onConfirm}>{confirmLabel}</Button>
       </div>
     </Modal>
@@ -1567,6 +1593,8 @@ function PasswordsView({ passwords, openModal, deletePassword, logActivity, toas
   const [sortBy, setSortBy] = useState("updated");
   const [revealed, setRevealed] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
+  const [selectMode, setSelectMode] = useState(false);
 
   const filtered = useMemo(() => {
     let list = passwords.filter((p) =>
@@ -1589,7 +1617,7 @@ function PasswordsView({ passwords, openModal, deletePassword, logActivity, toas
   return (
     <div>
       <TopBar title="Passwords" subtitle={`${passwords.length} saved credentials`}
-        right={<Button icon={Plus} onClick={() => openModal("password-add")}>Add password</Button>} />
+        right={<><Button variant="subtle" onClick={() => { setSelectMode((v) => !v); if (selectMode) setSelected(new Set()); }}>{selectMode ? "Cancel select" : "Select"}</Button>{selectMode && selected.size > 0 && <Button variant="danger" onClick={() => { selected.forEach((id) => deletePassword(id)); setSelected(new Set()); setSelectMode(false); }}>Delete selected ({selected.size})</Button>}<Button icon={Plus} onClick={() => openModal("password-add")}>Add password</Button></>} />
       <div style={{ padding: "0 28px 28px" }}>
         <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
           <div style={{ position: "relative", flex: "1 1 220px" }}>
@@ -1616,7 +1644,7 @@ function PasswordsView({ passwords, openModal, deletePassword, logActivity, toas
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
                 <thead>
                   <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                    {["Website", "Username", "Password", "Category", "Strength", "Updated", ""].map((h) => (
+                    {["", "Website", "Username", "Password", "Category", "Strength", "Updated", ""].map((h) => (
                       <th key={h} style={{ textAlign: "left", padding: "12px 16px", fontSize: 11, color: "var(--text-faint)", fontWeight: 700, textTransform: "uppercase" }}>{h}</th>
                     ))}
                   </tr>
@@ -1627,6 +1655,7 @@ function PasswordsView({ passwords, openModal, deletePassword, logActivity, toas
                     const strength = scorePassword(p.password);
                     return (
                       <tr key={p.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                        <td style={{ padding: "12px 8px" }}>{selectMode && <input type="checkbox" checked={selected.has(p.id)} onChange={(e) => { const ns = new Set(selected); if (e.target.checked) ns.add(p.id); else ns.delete(p.id); setSelected(ns); }} />}</td>
                         <td style={{ padding: "12px 16px" }}>
                           <div style={{ fontWeight: 600, fontSize: 13 }}>{p.title}</div>
                           {p.url && <div style={{ fontSize: 11, color: "var(--text-faint)", display: "flex", alignItems: "center", gap: 4 }}><Globe size={10} /> {p.url.replace(/^https?:\/\//, "")}</div>}
@@ -1737,6 +1766,8 @@ function NotesView({ notes, openModal, deleteNote, togglePin, toggleArchive, loc
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All");
   const [showArchived, setShowArchived] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [selectMode, setSelectMode] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const importInputRef = useRef(null);
   const [importing, setImporting] = useState(false);
@@ -1790,6 +1821,8 @@ function NotesView({ notes, openModal, deleteNote, togglePin, toggleArchive, loc
           <Button variant="subtle" icon={Upload} onClick={() => importInputRef.current?.click()} disabled={importing}>
             {importing ? "Importing…" : "Import"}
           </Button>
+          {selectMode && selected.size > 0 && <Button variant="danger" onClick={() => { selected.forEach((id) => deleteNote(id)); setSelected(new Set()); setSelectMode(false); }}>Delete selected ({selected.size})</Button>}
+          <Button variant="subtle" onClick={() => { setSelectMode((v) => !v); if (selectMode) setSelected(new Set()); }}>{selectMode ? "Cancel select" : "Select"}</Button>
           <Button icon={Plus} onClick={() => openModal("note-add")}>Add note</Button>
         </>} />
       <div style={{ padding: "0 28px 28px" }}>
@@ -1815,7 +1848,8 @@ function NotesView({ notes, openModal, deleteNote, togglePin, toggleArchive, loc
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px,1fr))", gap: 14 }}>
             {filtered.map((n) => (
-              <Card key={n.id} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <Card key={n.id} style={{ display: "flex", flexDirection: "column", gap: 10, position: "relative" }}>
+        {selectMode && <input type="checkbox" checked={selected.has(n.id)} onChange={(e) => { const ns = new Set(selected); if (e.target.checked) ns.add(n.id); else ns.delete(n.id); setSelected(ns); }} style={{ position: "absolute", top: 10, left: 10, zIndex: 2 }} />}
                 <button
                   onClick={() => openModal("note-view", n)}
                   className="sv-focus"
@@ -2048,6 +2082,8 @@ function FinanceView({ transactions, goals, generalSavings, savingsAdjustment, o
   const [typeFilter, setTypeFilter] = useState("All");
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [showAdjust, setShowAdjust] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [selectMode, setSelectMode] = useState(false);
 
   const totalIncome = transactions.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
   const totalExpense = transactions.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
@@ -2096,6 +2132,8 @@ function FinanceView({ transactions, goals, generalSavings, savingsAdjustment, o
     <div>
       <TopBar title="Finance" subtitle="Income, expenses, and balance at a glance"
         right={<>
+          <Button variant="subtle" onClick={() => { setSelectMode((v) => !v); if (selectMode) setSelected(new Set()); }}>{selectMode ? "Cancel select" : "Select"}</Button>
+          {selectMode && selected.size > 0 && <Button variant="danger" onClick={() => { selected.forEach((id) => deleteTransaction(id)); setSelected(new Set()); setSelectMode(false); }}>Delete selected ({selected.size})</Button>}
           <Button variant="subtle" icon={ArrowUpRight} onClick={() => openModal("transaction-add", { type: "income" })}>Add income</Button>
           <Button icon={ArrowDownRight} onClick={() => openModal("transaction-add", { type: "expense" })}>Add expense</Button>
         </>} />
@@ -2190,7 +2228,7 @@ function FinanceView({ transactions, goals, generalSavings, savingsAdjustment, o
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 680 }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                  {["Party", "Category", "Date", "Method", "Amount", ""].map((h) => (
+                  {["", "Party", "Category", "Date", "Method", "Amount", ""].map((h) => (
                     <th key={h} style={{ textAlign: "left", padding: "12px 16px", fontSize: 11, color: "var(--text-faint)", fontWeight: 700, textTransform: "uppercase" }}>{h}</th>
                   ))}
                 </tr>
@@ -2198,6 +2236,7 @@ function FinanceView({ transactions, goals, generalSavings, savingsAdjustment, o
               <tbody>
                 {filteredTx.map((t) => (
                   <tr key={t.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                    <td style={{ padding: "12px 8px" }}>{selectMode && <input type="checkbox" checked={selected.has(t.id)} onChange={(e) => { const ns = new Set(selected); if (e.target.checked) ns.add(t.id); else ns.delete(t.id); setSelected(ns); }} />}</td>
                     <td style={{ padding: "12px 16px", fontSize: 13, fontWeight: 600 }}>
                       <button onClick={() => openModal("transaction-view", t)} className="sv-focus" style={{
                         display: "flex", alignItems: "center", gap: 8, background: "none", border: "none",
@@ -2982,6 +3021,7 @@ function ordinalSuffix(n) {
 function getOccurrencesInRange(event, rangeStart, rangeEnd) {
   const anchor = event.date;
   if (!event.recurrence || event.recurrence === "none") {
+    if ((event.deletedDates || []).includes(anchor)) return [];
     return (anchor >= rangeStart && anchor <= rangeEnd) ? [anchor] : [];
   }
 
@@ -2999,7 +3039,7 @@ function getOccurrencesInRange(event, rangeStart, rangeEnd) {
     while (true) {
       const dateStr = ymd(cur.getFullYear(), cur.getMonth(), cur.getDate());
       if (dateStr > rangeEnd) break;
-      occurrences.push(dateStr);
+      if (!(event.deletedDates || []).includes(dateStr)) occurrences.push(dateStr);
       cur.setDate(cur.getDate() + 7);
     }
   } else if (event.recurrence === "monthly") {
@@ -3012,7 +3052,7 @@ function getOccurrencesInRange(event, rangeStart, rangeEnd) {
       const d = clampDayOfMonth(y, m, anchorDay);
       const dateStr = ymd(y, m, d);
       if (dateStr > rangeEnd) break;
-      if (dateStr >= anchor) occurrences.push(dateStr);
+      if (dateStr >= anchor && !(event.deletedDates || []).includes(dateStr)) occurrences.push(dateStr);
       m++; if (m > 11) { m = 0; y++; }
     }
   } else if (event.recurrence === "yearly") {
@@ -3023,7 +3063,7 @@ function getOccurrencesInRange(event, rangeStart, rangeEnd) {
       const d = clampDayOfMonth(y, anchorMonth, anchorDay);
       const dateStr = ymd(y, anchorMonth, d);
       if (dateStr > rangeEnd) break;
-      if (dateStr >= anchor) occurrences.push(dateStr);
+      if (dateStr >= anchor && !(event.deletedDates || []).includes(dateStr)) occurrences.push(dateStr);
       y++;
     }
   }
@@ -3066,10 +3106,13 @@ function fmtEventDateLabel(dateStr) {
   return fmtDate(dateStr);
 }
 
-function PlannerView({ events, openModal, deleteEvent, toggleEventComplete }) {
+function PlannerView({ events, openModal, deleteEvent, deleteOccurrence, toggleEventComplete }) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [activeAlarm, setActiveAlarm] = useState(null);
+  const [snoozeUntil, setSnoozeUntil] = useState({});
 
   const grid = useMemo(() => buildMonthGrid(cursor.year, cursor.month), [cursor]);
   const monthRange = useMemo(() => {
@@ -3108,6 +3151,49 @@ function PlannerView({ events, openModal, deleteEvent, toggleEventComplete }) {
       return (a.time || "").localeCompare(b.time || "");
     });
   }, [selectedEvents]);
+
+  // Lightweight in-app alarm: checks upcoming timed events and rings when due.
+  useEffect(() => {
+    const check = () => {
+      const now = Date.now();
+      for (const e of events) {
+        if (!e || e.allDay || !e.time || !e.date) continue;
+        if ((e.completedDates || []).includes(e.date)) continue;
+        const su = snoozeUntil[e.id] || 0;
+        if (su > now) continue;
+        const [y, m, d] = e.date.split("-").map(Number);
+        const [hh, mm] = String(e.time).split(":").map(Number);
+        const eventTime = new Date(y, m - 1, d, hh || 0, mm || 0).getTime();
+        if (Math.abs(now - eventTime) < 45000) {
+          setActiveAlarm(e);
+          break;
+        }
+      }
+    };
+    check();
+    const id = setInterval(check, 15000);
+    return () => clearInterval(id);
+  }, [events, snoozeUntil]);
+
+  useEffect(() => {
+    if (!activeAlarm) return;
+    const beep = () => {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        [0, 150].forEach((delay) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.frequency.value = 920; gain.gain.value = 0.22;
+          osc.start(ctx.currentTime + delay / 1000);
+          osc.stop(ctx.currentTime + delay / 1000 + 0.12);
+        });
+      } catch {}
+    };
+    beep();
+    const id = setInterval(beep, 1200);
+    return () => clearInterval(id);
+  }, [activeAlarm]);
 
   const goMonth = (delta) => {
     setCursor((c) => {
@@ -3217,7 +3303,12 @@ function PlannerView({ events, openModal, deleteEvent, toggleEventComplete }) {
             </Card>
 
             <Card>
-              <div className="sv-display" style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>Upcoming</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div className="sv-display" style={{ fontWeight: 600, fontSize: 14 }}>Upcoming</div>
+              {upcoming.length > 0 && (
+                <Button size="sm" variant="danger" icon={Trash2} onClick={() => setConfirmDeleteAll(true)}>Delete all</Button>
+              )}
+            </div>
               {upcoming.length === 0 ? (
                 <div style={{ fontSize: 12.5, color: "var(--text-faint)" }}>Nothing scheduled — enjoy the calm.</div>
               ) : (
@@ -3269,12 +3360,56 @@ function PlannerView({ events, openModal, deleteEvent, toggleEventComplete }) {
           title="Delete event"
           message={
             confirmDelete.recurrence && confirmDelete.recurrence !== "none"
-              ? `"${confirmDelete.title}" repeats ${RECURRENCE_LABELS[confirmDelete.recurrence].toLowerCase()}. Deleting it removes every past and future occurrence — you can restore it from Trash within ${TRASH_RETENTION_DAYS} days.`
+              ? `"${confirmDelete.title}" repeats ${RECURRENCE_LABELS[confirmDelete.recurrence].toLowerCase()}. Deleting all removes every future occurrence — past occurrences stay on the calendar.`
               : `Move "${confirmDelete.title}" to Trash? You can restore it within ${TRASH_RETENTION_DAYS} days.`
           }
-          confirmLabel="Move to Trash" danger onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => { deleteEvent(confirmDelete.id); setConfirmDelete(null); }} />
+          confirmLabel={confirmDelete.recurrence && confirmDelete.recurrence !== "none" ? "Delete all" : "Move to Trash"}
+          secondaryLabel={confirmDelete.recurrence && confirmDelete.recurrence !== "none" ? "This occurrence only" : undefined}
+          danger onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            if (confirmDelete.recurrence && confirmDelete.recurrence !== "none") {
+              const t = todayStr();
+              const farOut = ymd(new Date().getFullYear() + 1, new Date().getMonth(), new Date().getDate());
+              getOccurrencesInRange(confirmDelete, t, farOut).forEach((d) => deleteOccurrence(confirmDelete.id, d));
+            } else {
+              deleteEvent(confirmDelete.id);
+            }
+            setConfirmDelete(null);
+          }}
+          onSecondary={() => { if (deleteOccurrence) deleteOccurrence(confirmDelete.id, confirmDelete.date); setConfirmDelete(null); }} />
       )}
+      {confirmDeleteAll && (
+        <ConfirmDialog
+          title="Delete all upcoming events"
+          message={`Remove all future occurrences of ${upcoming.length} upcoming event${upcoming.length === 1 ? "" : "s"} from the Planner? Recurring events keep their past occurrences; one-time events are moved to Trash. You can restore or undo within ${TRASH_RETENTION_DAYS} days.`}
+          confirmLabel="Move to Trash" danger onCancel={() => setConfirmDeleteAll(false)}
+          onConfirm={() => {
+            const t = todayStr();
+            const farOut = ymd(new Date().getFullYear() + 1, new Date().getMonth(), new Date().getDate());
+            events.forEach((e) => {
+              const occs = getOccurrencesInRange(e, t, farOut);
+              if (occs.length === 0) return;
+              if (!e.recurrence || e.recurrence === "none") {
+                deleteEvent(e.id);
+              } else {
+                occs.forEach((d) => deleteOccurrence(e.id, d));
+              }
+            });
+            setConfirmDeleteAll(false);
+          }} />
+      )}
+    {activeAlarm && (
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+        <div style={{ background: "var(--surface)", borderRadius: 12, padding: 24, width: 360, maxWidth: "90vw", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Alarm: {activeAlarm.title}</div>
+          <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16 }}>{activeAlarm.date}{activeAlarm.time ? ` · ${activeAlarm.time}` : ""}</div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Button variant="subtle" onClick={() => { setSnoozeUntil((s) => ({ ...s, [activeAlarm.id]: Date.now() + 5 * 60 * 1000 })); setActiveAlarm(null); }}>Snooze 5m</Button>
+            <Button variant="danger" onClick={() => { toggleEventComplete(activeAlarm.id, activeAlarm.date); setActiveAlarm(null); }}>Dismiss</Button>
+          </div>
+        </div>
+      </div>
+    )}
     </div>
   );
 }
@@ -3425,10 +3560,12 @@ function ContactAvatar({ contact, size = 64, ring = 3 }) {
   );
 }
 
-function ContactsView({ contacts, openModal, deleteContact, toggleFavorite }) {
+function ContactsView({ contacts, openModal, deleteContact, toggleFavorite, onImport, onExport }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All");
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
+  const [selectMode, setSelectMode] = useState(false);
 
   const filtered = useMemo(() => {
     const list = contacts.filter((c) =>
@@ -3443,7 +3580,15 @@ function ContactsView({ contacts, openModal, deleteContact, toggleFavorite }) {
   return (
     <div>
       <TopBar title="Contacts" subtitle={`${contacts.length} contact${contacts.length === 1 ? "" : "s"}`}
-        right={<Button icon={Plus} onClick={() => openModal("contact-add")}>Add contact</Button>} />
+        right={<div style={{ display: "flex", gap: 8 }}>
+          <Button size="sm" variant="subtle" onClick={onExport}>Export</Button>
+          <Button size="sm" variant="subtle" onClick={() => document.getElementById("sv-contact-import").click()}>Import</Button>
+          <input id="sv-contact-import" type="file" accept="application/json,.json" style={{ display: "none" }}
+            onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f && onImport) onImport(f); e.target.value = ""; }} />
+          <Button variant="subtle" onClick={() => { setSelectMode((v) => !v); if (selectMode) setSelected(new Set()); }}>{selectMode ? "Cancel select" : "Select"}</Button>
+          {selectMode && selected.size > 0 && <Button variant="danger" onClick={() => { selected.forEach((id) => deleteContact(id)); setSelected(new Set()); setSelectMode(false); }}>Delete selected ({selected.size})</Button>}
+          <Button icon={Plus} onClick={() => openModal("contact-add")}>Add contact</Button>
+        </div>} />
       <div style={{ padding: "0 28px 28px" }}>
         <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
           <div style={{ position: "relative", flex: "1 1 220px" }}>
@@ -3462,7 +3607,8 @@ function ContactsView({ contacts, openModal, deleteContact, toggleFavorite }) {
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px,1fr))", gap: 16 }}>
             {filtered.map((c) => (
-              <Card key={c.id} style={{ padding: 0, overflow: "hidden" }}>
+              <Card key={c.id} style={{ padding: 0, overflow: "hidden", position: "relative" }}>
+                {selectMode && <input type="checkbox" checked={selected.has(c.id)} onChange={(e) => { const ns = new Set(selected); if (e.target.checked) ns.add(c.id); else ns.delete(c.id); setSelected(ns); }} style={{ position: "absolute", top: 8, left: 8, zIndex: 2 }} />}
                 <div style={{ position: "relative" }}>
                   <button onClick={() => openModal("contact-view", c)} className="sv-focus" style={{ display: "block", width: "100%", border: "none", padding: 0, cursor: "pointer", background: "none" }}>
                     <ContactBanner contact={c} />
@@ -3903,6 +4049,8 @@ function trashEntrySubtitle(entry) {
 function TrashView({ trash, onRestore, onDeleteForever, onEmptyTrash }) {
   const [typeFilter, setTypeFilter] = useState("All");
   const [confirmDeleteForever, setConfirmDeleteForever] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
+  const [selectMode, setSelectMode] = useState(false);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
 
   const filtered = useMemo(() => {
@@ -3914,7 +4062,7 @@ function TrashView({ trash, onRestore, onDeleteForever, onEmptyTrash }) {
   return (
     <div>
       <TopBar title="Trash" subtitle={`${trash.length} item${trash.length === 1 ? "" : "s"} — deleted items are kept for ${TRASH_RETENTION_DAYS} days before being permanently removed`}
-        right={trash.length > 0 && <Button variant="danger" icon={Trash2} onClick={() => setConfirmEmpty(true)}>Empty trash</Button>} />
+        right={trash.length > 0 && <>{selectMode && selected.size > 0 && <Button variant="danger" icon={Trash2} onClick={() => { selected.forEach((id) => onDeleteForever(id)); setSelected(new Set()); setSelectMode(false); }}>Delete selected ({selected.size})</Button>}<Button variant="subtle" onClick={() => { setSelectMode((v) => !v); if (selectMode) setSelected(new Set()); }}>{selectMode ? "Cancel select" : "Select"}</Button><Button variant="danger" icon={Trash2} onClick={() => setConfirmEmpty(true)}>Empty trash</Button></>} />
       <div style={{ padding: "0 28px 28px" }}>
         {trash.length > 0 && (
           <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
@@ -3937,6 +4085,7 @@ function TrashView({ trash, onRestore, onDeleteForever, onEmptyTrash }) {
                 const daysLeft = Math.max(0, TRASH_RETENTION_DAYS - age);
                 return (
                   <div key={entry.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
+                    {selectMode && <input type="checkbox" checked={selected.has(entry.id)} onChange={(e) => { const ns = new Set(selected); if (e.target.checked) ns.add(entry.id); else ns.delete(entry.id); setSelected(ns); }} />}
                     <div style={{ width: 30, height: 30, borderRadius: 8, background: "var(--surface-2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                       <Icon size={14} color="var(--text-faint)" />
                     </div>
@@ -4629,6 +4778,19 @@ function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessi
           <SettingRow label="Hide sensitive info by default" sub="Passwords and notes stay masked until you choose to reveal them">
             <Toggle checked={settings.hideSensitive} onChange={(v) => setSettings((s) => ({ ...s, hideSensitive: v }))} />
           </SettingRow>
+          <div style={{
+            display: "flex", gap: 10, alignItems: "flex-start", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6,
+            background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12
+          }}>
+            <Bell size={15} color="var(--amber)" style={{ flexShrink: 0, marginTop: 2 }} />
+            <div>
+              <strong style={{ color: "var(--text)" }}>Event reminders are the one exception to encryption.</strong>{" "}
+              So alarms can fire while the vault is locked or SecureVault is running in the tray, each event's{" "}
+              <em>title, date, time, category, and repeat setting</em> are kept in a small unencrypted file
+              (<span className="sv-mono">securevault-reminders.json</span>) next to your vault. Locations, notes, and
+              everything else stay fully encrypted. Avoid putting anything sensitive in an event title.
+            </div>
+          </div>
         </SettingsSection>
 
         <SettingsSection title="Data">
@@ -5061,6 +5223,18 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [passwords, notes, transactions, budgets, goals, generalSavings, savingsAdjustment, events, contacts, trash, activity, sessions, settings, auth, theme, booted, locked, serverStatus, integrityIssue]);
 
+  // ---- Reminders sync: keeps the plaintext reminders index current so ----
+  // alarms can fire while locked or minimized to the tray. Guarded to only
+  // run while unlocked — events becomes [] on lock, and syncing that would
+  // wipe out every reminder instead of just pausing updates.
+  const reminderSyncTimer = useRef(null);
+  useEffect(() => {
+    if (!booted || locked || serverStatus !== "connected") return;
+    clearTimeout(reminderSyncTimer.current);
+    reminderSyncTimer.current = setTimeout(() => { syncReminders(events); }, 800);
+    return () => clearTimeout(reminderSyncTimer.current);
+  }, [events, booted, locked, serverStatus]);
+
   /* auto-lock on inactivity */
   const idleTimer = useRef(null);
   useEffect(() => {
@@ -5311,6 +5485,10 @@ export default function App() {
     if (e) moveToTrash("event", e);
     toast("Event moved to Trash.", "success");
   };
+  const deleteOccurrence = (id, dateStr) => {
+    setEvents((es) => es.map((e) => e.id === id ? { ...e, deletedDates: [...(e.deletedDates || []), dateStr] } : e));
+    toast("Occurrence removed.", "success");
+  };
   const toggleEventComplete = (id, occurrenceDate) => {
     setEvents((es) => es.map((e) => {
       if (e.id !== id) return e;
@@ -5337,6 +5515,43 @@ export default function App() {
     setContacts((cs) => cs.filter((x) => x.id !== id));
     if (c) moveToTrash("contact", c);
     toast("Contact moved to Trash.", "success");
+  };
+  const exportContacts = () => {
+    const blob = new Blob([JSON.stringify(contacts, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "contacts.json"; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const importContacts = (file) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = JSON.parse(e.target.result);
+        const list = Array.isArray(parsed) ? parsed : (parsed.contacts || []);
+        const normalized = list.map((c) => {
+          const name = [c["first-name"], c["middle-name"], c["last-name"]].filter(Boolean).join(" ").trim()
+            || c.name || c.fullName || "Unnamed";
+          return {
+            id: c.id || uid(),
+            name,
+            category: c.category || "Other",
+            phone: c["mobile-phone"] || c.phone || c["phone-number"] || "",
+            email: c["personal-email"] || c.email || "",
+            company: c["company-name"] || c.company || "",
+            jobTitle: c["job-title"] || c.jobTitle || "",
+            tags: c.tags || [],
+            notes: c.notes || "",
+            favorite: !!c.favorite,
+            avatar: null, banner: null,
+            createdAt: Date.now(), updatedAt: Date.now(),
+          };
+        });
+        setContacts((cs) => [...normalized, ...cs]);
+        toast(`Imported ${normalized.length} contact(s).`, "success");
+      } catch (err) { toast("Import failed: invalid JSON.", "error"); }
+    };
+    reader.readAsText(file);
   };
   const toggleContactFavorite = (id) => {
     setContacts((cs) => cs.map((c) => c.id === id ? { ...c, favorite: !c.favorite } : c));
@@ -5650,10 +5865,10 @@ export default function App() {
           <GoalsView goals={goals} generalSavings={generalSavings} openModal={openModal} deleteGoal={deleteGoal} />
         )}
         {view === "planner" && (
-          <PlannerView events={events} openModal={openModal} deleteEvent={deleteEvent} toggleEventComplete={toggleEventComplete} />
+          <PlannerView events={events} openModal={openModal} deleteEvent={deleteEvent} deleteOccurrence={deleteOccurrence} toggleEventComplete={toggleEventComplete} />
         )}
         {view === "contacts" && (
-          <ContactsView contacts={contacts} openModal={openModal} deleteContact={deleteContact} toggleFavorite={toggleContactFavorite} />
+          <ContactsView contacts={contacts} openModal={openModal} deleteContact={deleteContact} toggleFavorite={toggleContactFavorite} onImport={importContacts} onExport={exportContacts} />
         )}
         {view === "trash" && (
           <TrashView trash={trash} onRestore={restoreFromTrash} onDeleteForever={deleteForever} onEmptyTrash={emptyTrash} />

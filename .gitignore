@@ -1,1 +1,11 @@
-node_modules
+﻿node_modules/
+dist/
+release/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+securevault-data.json
+*securevault-data.json*
+Local Data/
