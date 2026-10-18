@@ -1206,7 +1206,8 @@ function VisionBoardView({ items, setItems, toast, onMoveToTrash }) {
   const [confirmBulkTrash, setConfirmBulkTrash] = useState(false);
   const [filter, setFilter] = useState("All");
   const [query, setQuery] = useState("");
-  const blank = { title: "", category: "Personal", description: "", image: "", targetDate: "", status: "In progress" };
+  const [stepDraft, setStepDraft] = useState("");
+  const blank = { title: "", category: "Personal", description: "", image: "", targetDate: "", status: "In progress", steps: [] };
   const categories = ["All", "Personal", "Career", "Finance", "Travel", "Home", "Health", "Learning", "Other"];
   const visible = (items || []).filter((item) => {
     const matchesFilter = filter === "All" || item.category === filter;
@@ -1239,6 +1240,7 @@ function VisionBoardView({ items, setItems, toast, onMoveToTrash }) {
       image: String(editor.image || "").trim(),
       targetDate: editor.targetDate || "",
       status: editor.status || "In progress",
+      steps: (Array.isArray(editor.steps) ? editor.steps : []).map((step) => ({ id: step.id || `step-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text: String(step.text || "").trim(), type: step.type === "daily" ? "daily" : "once", completed: !!step.completed, checkinDates: Array.isArray(step.checkinDates) ? [...new Set(step.checkinDates)] : [] })).filter((step) => step.text),
       createdAt: editor.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -1273,7 +1275,7 @@ function VisionBoardView({ items, setItems, toast, onMoveToTrash }) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 7, flexWrap: "wrap", minWidth: 0 }}>
           {selectMode && selectedIds.size > 0 && <button onClick={() => setConfirmBulkTrash(true)} style={{ ...buttonStyle, color: "var(--coral)" }}><Trash2 size={13} /> Move {selectedIds.size} to Trash</button>}
           <button onClick={selectMode ? cancelSelection : () => setSelectMode(true)} style={buttonStyle}>{selectMode ? "Cancel select" : "Select"}</button>
-          <button onClick={() => setEditor({ ...blank })} style={{ ...buttonStyle, background: "var(--primary)", borderColor: "var(--primary)", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 11px", minHeight: 36 }}>
+          <button onClick={() => { setStepDraft(""); setEditor({ ...blank }); }} style={{ ...buttonStyle, background: "var(--primary)", borderColor: "var(--primary)", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 11px", minHeight: 36 }}>
             <Plus size={14} /> Add vision
           </button>
         </div>
@@ -1309,7 +1311,7 @@ function VisionBoardView({ items, setItems, toast, onMoveToTrash }) {
           <p style={{ color: "var(--text-muted)", fontSize: 13, maxWidth: 440, margin: "0 auto 20px", lineHeight: 1.7 }}>
             {query || filter !== "All" ? "Try another search or category." : "Add a goal, a dream destination, a future milestone, or anything you want to work toward. An image URL is optional."}
           </p>
-          {!query && filter === "All" && <button onClick={() => setEditor({ ...blank })} style={{ ...buttonStyle, background: "var(--primary)", borderColor: "var(--primary)", color: "#fff" }}><Plus size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />Create your first vision</button>}
+          {!query && filter === "All" && <button onClick={() => { setStepDraft(""); setEditor({ ...blank }); }} style={{ ...buttonStyle, background: "var(--primary)", borderColor: "var(--primary)", color: "#fff" }}><Plus size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />Create your first vision</button>}
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 245px), 1fr))", gap: 16, alignItems: "stretch" }}>
@@ -1330,6 +1332,7 @@ function VisionBoardView({ items, setItems, toast, onMoveToTrash }) {
                 <h3 className="sv-display" style={{ fontSize: 16, lineHeight: 1.3, margin: "0 0 8px", overflowWrap: "anywhere", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{item.title}</h3>
                 <p style={{ color: "var(--text-muted)", fontSize: 12.5, lineHeight: 1.6, margin: "0 0 12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", maxHeight: "4.8em", minHeight: "4.8em" }}>{item.description || "A vision you're working toward."}</p>
                 {!selectMode && <div style={{ color: "var(--primary)", fontSize: 11, fontWeight: 600, margin: "-4px 0 10px" }}>Click to read full vision →</div>}
+                {Array.isArray(item.steps) && item.steps.length > 0 && (() => { const now = new Date(); const today = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0"); const total = item.steps.length; const done = item.steps.filter((step) => step.type === "daily" ? (Array.isArray(step.checkinDates) && step.checkinDates.includes(today)) : !!step.completed).length; const pct = total ? Math.round(done / total * 100) : 0; return <div style={{ margin: "0 0 12px", padding: 10, borderRadius: 9, background: "var(--surface-2)" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11, marginBottom: 7 }}><span style={{ color: "var(--text-muted)" }}>Action plan · today</span><span style={{ color: "var(--mint)", fontWeight: 700 }}>{done}/{total} · {pct}%</span></div><div style={{ height: 5, borderRadius: 9, overflow: "hidden", background: "var(--surface-3)" }}><div style={{ width: `${pct}%`, height: "100%", background: "var(--mint)", transition: "width .2s" }} /></div></div>; })()}
                 <div style={{ borderTop: "1px solid var(--border)", paddingTop: 11, display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 12 }}>
                   <span style={{ color: "var(--text-muted)", fontSize: 11.5 }}>{item.targetDate ? `Target: ${item.targetDate}` : "No target date"}</span>
                   <span style={{ color: item.status === "Achieved" ? "var(--mint)" : "var(--amber)", fontSize: 10.5, fontWeight: 700 }}>{item.status}</span>
@@ -1338,7 +1341,7 @@ function VisionBoardView({ items, setItems, toast, onMoveToTrash }) {
                   <button onClick={(e) => { e.stopPropagation(); if (selectMode) { toggleSelected(item.id); return; } setItems((current) => current.map((v) => v.id === item.id ? { ...v, status: v.status === "Achieved" ? "In progress" : "Achieved", updatedAt: new Date().toISOString() } : v)); }} title={item.status === "Achieved" ? "Mark in progress" : "Mark achieved"} style={{ ...buttonStyle, flex: 1, padding: "8px 9px", color: item.status === "Achieved" ? "var(--text-muted)" : "var(--mint)" }}>
                     <CheckCircle2 size={13} style={{ verticalAlign: "middle", marginRight: 5 }} />{item.status === "Achieved" ? "Reopen" : "Achieved"}
                   </button>
-                  <button onClick={(e) => { e.stopPropagation(); if (selectMode) { toggleSelected(item.id); return; } setEditor({ ...blank, ...item, image: item.image || "", title: item.title || "", description: item.description || "", category: item.category || "Personal", status: item.status || "In progress", targetDate: item.targetDate || "" }); }} title={selectMode ? "Toggle selection" : "Edit vision"} style={{ ...buttonStyle, padding: "8px 10px" }}>{selectMode ? <CheckCircle2 size={14} /> : <Pencil size={14} />}</button>
+                  <button onClick={(e) => { e.stopPropagation(); if (selectMode) { toggleSelected(item.id); return; } setStepDraft(""); setEditor({ ...blank, ...item, steps: Array.isArray(item.steps) ? item.steps : [], image: item.image || "", title: item.title || "", description: item.description || "", category: item.category || "Personal", status: item.status || "In progress", targetDate: item.targetDate || "" }); }} title={selectMode ? "Toggle selection" : "Edit vision"} style={{ ...buttonStyle, padding: "8px 10px" }}>{selectMode ? <CheckCircle2 size={14} /> : <Pencil size={14} />}</button>
                   {!selectMode && <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(item); }} title="Move vision to Trash" style={{ ...buttonStyle, padding: "8px 10px", color: "var(--coral)" }}><Trash2 size={14} /></button>}
                 </div>
               </div>
@@ -1385,11 +1388,43 @@ function VisionBoardView({ items, setItems, toast, onMoveToTrash }) {
             <span style={{ color: viewing.status === "Achieved" ? "var(--mint)" : "var(--amber)", fontSize: 11, fontWeight: 700 }}>{viewing.status}</span>
             {viewing.targetDate && <span style={{ color: "var(--text-muted)", fontSize: 11 }}>Target: {viewing.targetDate}</span>}
           </div>
-          <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.75, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "50vh", overflowY: "auto", paddingRight: 4 }}>
+          <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.75, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "30vh", overflowY: "auto", paddingRight: 4 }}>
             {viewing.description || "A vision you're working toward."}
           </div>
+          <div style={{ marginTop: 20, borderTop: "1px solid var(--border)", paddingTop: 16 }}>
+            {(() => {
+              const steps = Array.isArray(viewing.steps) ? viewing.steps : [];
+              const today = new Date().getFullYear() + "-" + String(new Date().getMonth() + 1).padStart(2, "0") + "-" + String(new Date().getDate()).padStart(2, "0");
+              const total = steps.length;
+              const done = steps.filter((step) => step.type === "daily" ? (Array.isArray(step.checkinDates) && step.checkinDates.includes(today)) : !!step.completed).length;
+              const pct = total ? Math.round(done / total * 100) : 0;
+              return <>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}><h4 className="sv-display" style={{ margin: 0, fontSize: 15 }}>Step-by-step action plan</h4><span style={{ color: "var(--mint)", fontSize: 12, fontWeight: 700 }}>{`${done}/${total} steps done today (${pct}%)`}</span></div>
+                {total > 0 && <div style={{ height: 6, borderRadius: 8, overflow: "hidden", background: "var(--surface-3)", marginBottom: 12 }}><div style={{ height: "100%", width: `${pct}%`, background: "var(--mint)", transition: "width .2s" }} /></div>}
+                {steps.length === 0 ? <p style={{ color: "var(--text-muted)", fontSize: 12.5, margin: "8px 0 12px" }}>No steps yet. Edit this vision to add your first action.</p> : <div style={{ display: "grid", gap: 7 }}>{steps.map((step, index) => {
+                  const daily = step.type === "daily";
+                  const dates = Array.isArray(step.checkinDates) ? step.checkinDates : [];
+                  const checkedToday = daily ? dates.includes(today) : !!step.completed;
+                  const streak = daily ? (() => { let count = 0; const d = new Date(); while (true) { const key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); if (!dates.includes(key)) break; count++; d.setDate(d.getDate() - 1); } return count; })() : 0;
+                  return <div key={step.id || index} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 11px", border: "1px solid var(--border)", borderRadius: 9, background: checkedToday ? "var(--mint-soft)" : "var(--surface-2)" }}>
+                    <input aria-label={daily ? `Check in today: ${step.text}` : `Complete step: ${step.text}`} type="checkbox" checked={checkedToday} onChange={(e) => {
+                      let nextStep;
+                      if (daily) { const nextDates = e.target.checked ? [...new Set([...dates, today])] : dates.filter((date) => date !== today); nextStep = { ...step, type: "daily", checkinDates: nextDates }; }
+                      else nextStep = { ...step, completed: e.target.checked };
+                      const nextSteps = steps.map((candidate, i) => i === index ? nextStep : candidate);
+                      const actionable = nextSteps.filter((candidate) => candidate.type !== "daily");
+                      const allDone = actionable.length > 0 && actionable.every((candidate) => candidate.completed);
+                      const nextItem = { ...viewing, steps: nextSteps, status: allDone ? "Achieved" : (viewing.status === "Achieved" ? "In progress" : viewing.status), updatedAt: new Date().toISOString() };
+                      setItems((current) => current.map((item) => item.id === viewing.id ? nextItem : item)); setViewing(nextItem);
+                    }} style={{ marginTop: 3, accentColor: "var(--mint)" }} />
+                    <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 12.5, lineHeight: 1.55, color: checkedToday && !daily ? "var(--text-muted)" : "var(--text)", textDecoration: checkedToday && !daily ? "line-through" : "none" }}>{step.text}</div><div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4, fontSize: 10.5, color: "var(--text-muted)" }}><span>{daily ? "Daily habit" : "One-time step"}</span>{daily && <span>{dates.length} total check-in{dates.length === 1 ? "" : "s"}{streak > 0 ? ` · ${streak}-day streak` : ""}</span>}{daily && <span>{checkedToday ? "Checked in today" : "Not checked in today"}</span>}</div></div>
+                  </div>;
+                })}</div>}
+              </>;
+            })()}
+          </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 9, marginTop: 18 }}>
-            <button onClick={() => { setEditor({ ...blank, ...viewing, image: viewing.image || "", title: viewing.title || "", description: viewing.description || "", category: viewing.category || "Personal", status: viewing.status || "In progress", targetDate: viewing.targetDate || "" }); setViewing(null); }} style={buttonStyle}><Pencil size={13} style={{ verticalAlign: "middle", marginRight: 5 }} /> Edit vision</button>
+            <button onClick={() => { setStepDraft(""); setEditor({ ...blank, ...viewing, steps: Array.isArray(viewing.steps) ? viewing.steps : [], image: viewing.image || "", title: viewing.title || "", description: viewing.description || "", category: viewing.category || "Personal", status: viewing.status || "In progress", targetDate: viewing.targetDate || "" }); setViewing(null); }} style={buttonStyle}><Pencil size={13} style={{ verticalAlign: "middle", marginRight: 5 }} /> Edit vision</button>
             <button onClick={() => setViewing(null)} style={buttonStyle}>Close</button>
           </div>
         </Modal>
@@ -1404,6 +1439,51 @@ function VisionBoardView({ items, setItems, toast, onMoveToTrash }) {
             <Field label="Category"><select value={editor.category} onChange={(e) => setEditor({ ...editor, category: e.target.value })} style={fieldStyle}>{categories.filter((c) => c !== "All").map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
             <Field label="Status"><select value={editor.status} onChange={(e) => setEditor({ ...editor, status: e.target.value })} style={fieldStyle}><option>In progress</option><option>Achieved</option></select></Field>
             <div style={{ gridColumn: "1 / -1" }}><Field label="Description"><textarea rows={3} value={editor.description} onChange={(e) => setEditor({ ...editor, description: e.target.value })} placeholder="Why does this matter to you? What's your first step?" style={{ ...fieldStyle, resize: "vertical" }} /></Field></div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <Field label="Step-by-step action plan">
+                <div style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface-2)" }}>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      value={stepDraft}
+                      onChange={(e) => setStepDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
+                        const text = stepDraft.trim();
+                        if (!text) return;
+                        setEditor((current) => ({
+                          ...current,
+                          steps: [
+                            ...(Array.isArray(current.steps) ? current.steps : []),
+                            { id: `step-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text, type: "once", completed: false, checkinDates: [] },
+                          ],
+                        }));
+                        setStepDraft("");
+                      }}
+                      placeholder="Add a small, actionable step and press Enter"
+                      style={{ ...fieldStyle, flex: 1, minWidth: 0 }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const text = stepDraft.trim();
+                        if (!text) return;
+                        setEditor((current) => ({
+                          ...current,
+                          steps: [
+                            ...(Array.isArray(current.steps) ? current.steps : []),
+                            { id: `step-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text, type: "once", completed: false, checkinDates: [] },
+                          ],
+                        }));
+                        setStepDraft("");
+                      }}
+                      style={{ ...buttonStyle, background: "var(--primary)", color: "#fff", borderColor: "var(--primary)" }}
+                    ><Plus size={13} /> Add</button>
+                  </div>
+                  {(Array.isArray(editor.steps) ? editor.steps : []).length === 0 ? <p style={{ color: "var(--text-muted)", fontSize: 12, margin: "10px 0 0", lineHeight: 1.5 }}>Break the goal into practical actions. You can check each one off from the goal details.</p> : <div style={{ display: "grid", gap: 7, marginTop: 10 }}>{editor.steps.map((step, index) => <div key={step.id || index} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 9px", borderRadius: 8, border: "1px solid var(--border)" }}><input type="checkbox" checked={!!step.completed} onChange={(e) => setEditor((current) => ({ ...current, steps: current.steps.map((candidate, i) => i === index ? { ...candidate, completed: e.target.checked } : candidate) }))} style={{ accentColor: "var(--mint)" }} /><span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflowWrap: "anywhere", textDecoration: step.completed && step.type !== "daily" ? "line-through" : "none", color: step.completed && step.type !== "daily" ? "var(--text-muted)" : "var(--text)" }}>{step.text}</span><select aria-label={`Tracking type for ${step.text}`} value={step.type === "daily" ? "daily" : "once"} onChange={(e) => setEditor((current) => ({ ...current, steps: current.steps.map((candidate, i) => i === index ? { ...candidate, type: e.target.value, checkinDates: Array.isArray(candidate.checkinDates) ? candidate.checkinDates : [] } : candidate) }))} style={{ ...fieldStyle, width: 112, padding: "6px 7px", fontSize: 11 }}><option value="once">One-time</option><option value="daily">Daily check-in</option></select><button type="button" onClick={() => setEditor((current) => ({ ...current, steps: current.steps.filter((candidate, i) => i !== index) }))} title="Remove step" style={{ ...buttonStyle, padding: "5px 8px", color: "var(--coral)" }}><Trash2 size={12} /></button></div>)}</div>}
+                </div>
+              </Field>
+            </div>
             <div style={{ gridColumn: "1 / -1", display: "grid", gap: 10 }}>
               <Field label="Choose an image from your computer (optional)">
                 <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: 14, border: "1px dashed var(--border)", borderRadius: 12, background: "var(--surface-1)" }}>
