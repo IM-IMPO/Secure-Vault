@@ -1315,18 +1315,21 @@ function VisionBoardView({ items, setItems, toast, onMoveToTrash }) {
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 245px), 1fr))", gap: 16, alignItems: "stretch" }}>
-          {visible.map((item) => (
+          {visible.map((item) => {
+            const todayKey = (() => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); })();
+            const isOverdue = !!item.targetDate && item.targetDate < todayKey && item.status !== "Achieved";
+            return (
             <article key={item.id}
               onClick={selectMode ? () => toggleSelected(item.id) : () => setViewing(item)}
               role="button"
               tabIndex={0}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectMode ? toggleSelected(item.id) : setViewing(item); } }}
-              style={{ minWidth: 0, overflow: "hidden", border: selectedIds.has(item.id) ? "1px solid var(--primary)" : "1px solid var(--border)", borderLeft: selectedIds.has(item.id) ? "4px solid var(--primary)" : "1px solid var(--border)", borderRadius: 15, background: selectedIds.has(item.id) ? "var(--primary-soft)" : "var(--surface)", display: "flex", flexDirection: "column", transition: "transform .18s ease, border-color .18s ease, background .18s ease", cursor: "pointer", position: "relative", boxShadow: selectedIds.has(item.id) ? "0 0 0 1px var(--primary-soft)" : "none" }}>
+              style={{ minWidth: 0, overflow: "hidden", border: isOverdue ? "1px solid #ef4444" : selectedIds.has(item.id) ? "1px solid var(--primary)" : "1px solid var(--border)", borderLeft: isOverdue ? "4px solid #ef4444" : selectedIds.has(item.id) ? "4px solid var(--primary)" : "1px solid var(--border)", borderRadius: 15, background: selectedIds.has(item.id) ? "var(--primary-soft)" : "var(--surface)", display: "flex", flexDirection: "column", transition: "transform .18s ease, border-color .18s ease, background .18s ease", cursor: "pointer", position: "relative", boxShadow: selectedIds.has(item.id) ? "0 0 0 1px var(--primary-soft)" : "none" }}>
               {selectMode && <div style={{ position: "absolute", zIndex: 2, top: 10, right: 10, width: 25, height: 25, borderRadius: "50%", display: "grid", placeItems: "center", background: selectedIds.has(item.id) ? "var(--primary)" : "rgba(10,15,22,.72)", color: "#fff", border: selectedIds.has(item.id) ? "1px solid var(--primary)" : "1px solid rgba(255,255,255,.45)" }}>{selectedIds.has(item.id) ? <CheckCircle2 size={17} /> : <span style={{ width: 7, height: 7, borderRadius: "50%", border: "1px solid rgba(255,255,255,.8)" }} />}</div>}
               <div style={{ height: 150, flexShrink: 0, position: "relative", overflow: "hidden", background: "linear-gradient(135deg, var(--primary-soft), var(--surface-3))" }}>
                 {item.image ? <img src={item.image} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "grid", placeItems: "center", color: "var(--primary)" }}><Sparkles size={36} opacity={0.8} /></div>}
                 <span style={{ position: "absolute", top: 11, left: 11, borderRadius: 20, padding: "5px 9px", fontSize: 10.5, fontWeight: 700, background: "rgba(10,15,22,.78)", color: "#fff", backdropFilter: "blur(8px)" }}>{item.category}</span>
-                {item.status === "Achieved" && <span style={{ position: "absolute", top: 11, right: 11, borderRadius: 20, padding: "5px 9px", fontSize: 10.5, fontWeight: 700, background: "#0d8b63", color: "#fff" }}>✓ Achieved</span>}
+                {item.status === "Achieved" ? <span style={{ position: "absolute", top: 11, right: 11, borderRadius: 20, padding: "5px 9px", fontSize: 10.5, fontWeight: 700, background: "#0d8b63", color: "#fff" }}>✓ Achieved</span> : isOverdue && <span style={{ position: "absolute", top: 11, right: 11, borderRadius: 20, padding: "5px 9px", fontSize: 10.5, fontWeight: 700, background: "#dc2626", color: "#fff" }}>⚠ Overdue</span>}
               </div>
               <div style={{ padding: 15, display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
                 <h3 className="sv-display" style={{ fontSize: 16, lineHeight: 1.3, margin: "0 0 8px", overflowWrap: "anywhere", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{item.title}</h3>
@@ -1334,8 +1337,8 @@ function VisionBoardView({ items, setItems, toast, onMoveToTrash }) {
                 {!selectMode && <div style={{ color: "var(--primary)", fontSize: 11, fontWeight: 600, margin: "-4px 0 10px" }}>Click to read full vision →</div>}
                 {Array.isArray(item.steps) && item.steps.length > 0 && (() => { const now = new Date(); const today = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0"); const total = item.steps.length; const done = item.steps.filter((step) => step.type === "daily" ? (Array.isArray(step.checkinDates) && step.checkinDates.includes(today)) : !!step.completed).length; const pct = total ? Math.round(done / total * 100) : 0; return <div style={{ margin: "0 0 12px", padding: 10, borderRadius: 9, background: "var(--surface-2)" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11, marginBottom: 7 }}><span style={{ color: "var(--text-muted)" }}>Action plan · today</span><span style={{ color: "var(--mint)", fontWeight: 700 }}>{done}/{total} · {pct}%</span></div><div style={{ height: 5, borderRadius: 9, overflow: "hidden", background: "var(--surface-3)" }}><div style={{ width: `${pct}%`, height: "100%", background: "var(--mint)", transition: "width .2s" }} /></div></div>; })()}
                 <div style={{ borderTop: "1px solid var(--border)", paddingTop: 11, display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 12 }}>
-                  <span style={{ color: "var(--text-muted)", fontSize: 11.5 }}>{item.targetDate ? `Target: ${item.targetDate}` : "No target date"}</span>
-                  <span style={{ color: item.status === "Achieved" ? "var(--mint)" : "var(--amber)", fontSize: 10.5, fontWeight: 700 }}>{item.status}</span>
+                  <span style={{ color: isOverdue ? "#ef4444" : "var(--text-muted)", fontSize: 11.5, fontWeight: isOverdue ? 700 : 400 }}>{item.targetDate ? `${isOverdue ? "Overdue · Target: " : "Target: "}${item.targetDate}` : "No target date"}</span>
+                  <span style={{ color: item.status === "Achieved" ? "var(--mint)" : isOverdue ? "#ef4444" : "var(--amber)", fontSize: 10.5, fontWeight: 700 }}>{isOverdue ? "Overdue" : item.status}</span>
                 </div>
                 <div style={{ display: "flex", gap: 7 }}>
                   <button onClick={(e) => { e.stopPropagation(); if (selectMode) { toggleSelected(item.id); return; } setItems((current) => current.map((v) => v.id === item.id ? { ...v, status: v.status === "Achieved" ? "In progress" : "Achieved", updatedAt: new Date().toISOString() } : v)); }} title={item.status === "Achieved" ? "Mark in progress" : "Mark achieved"} style={{ ...buttonStyle, flex: 1, padding: "8px 9px", color: item.status === "Achieved" ? "var(--text-muted)" : "var(--mint)" }}>
@@ -1346,7 +1349,8 @@ function VisionBoardView({ items, setItems, toast, onMoveToTrash }) {
                 </div>
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -1386,7 +1390,7 @@ function VisionBoardView({ items, setItems, toast, onMoveToTrash }) {
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
             <span style={{ borderRadius: 20, padding: "5px 9px", fontSize: 11, fontWeight: 700, background: "var(--surface-2)", color: "var(--text-muted)" }}>{viewing.category}</span>
             <span style={{ color: viewing.status === "Achieved" ? "var(--mint)" : "var(--amber)", fontSize: 11, fontWeight: 700 }}>{viewing.status}</span>
-            {viewing.targetDate && <span style={{ color: "var(--text-muted)", fontSize: 11 }}>Target: {viewing.targetDate}</span>}
+            {viewing.targetDate && (() => { const d = new Date(); const todayKey = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); const overdue = viewing.targetDate < todayKey && viewing.status !== "Achieved"; return <span style={{ color: overdue ? "#ef4444" : "var(--text-muted)", fontSize: 11, fontWeight: overdue ? 700 : 400 }}>{overdue ? "⚠ Overdue · Target: " : "Target: "}{viewing.targetDate}</span>; })()}
           </div>
           <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.75, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "30vh", overflowY: "auto", paddingRight: 4 }}>
             {viewing.description || "A vision you're working toward."}
@@ -2457,7 +2461,7 @@ function NoteViewModal({ note, onClose, onEdit, togglePin, toggleArchive, onDele
 
 const CATEGORY_COLORS = ["#4C7CF3", "#34D399", "#F5A623", "#F0596B", "#A78BFA", "#38BDF8", "#FB923C", "#F472B6", "#94A3B8"];
 
-function FinanceView({ transactions, goals, generalSavings, savingsAdjustment, onAdjustSavings, openModal, deleteTransaction, hideValues }) {
+function FinanceView({ transactions, goals, generalSavings, savingsAdjustment, onAdjustSavings, openModal, deleteTransaction, hideValues, showEditButtons = true }) {
   const [range, setRange] = useState("monthly");
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("All");
@@ -2522,7 +2526,7 @@ function FinanceView({ transactions, goals, generalSavings, savingsAdjustment, o
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 14, marginBottom: 18 }}>
           <StatCard icon={ArrowUpRight} label="Total income" value={mask(fmtMoney(combinedIncome))} tone="mint"
             sub={externalSavings > 0 ? `Includes ${fmtMoney(externalSavings)} in new savings` : undefined}
-            onEdit={externalSavings > 0 ? () => setShowAdjust(true) : undefined} />
+            onEdit={showEditButtons && externalSavings > 0 ? () => setShowAdjust(true) : undefined} />
           <StatCard icon={ArrowDownRight} label="Total expenses" value={mask(fmtMoney(totalExpense))} tone="coral" />
           <StatCard icon={Wallet} label="Available balance" value={mask(fmtMoney(availableBalance))} tone="primary" sub="Reflects any transfers into savings" />
           <StatCard icon={Target} label="Total savings" value={mask(fmtMoney(totalSaved))} tone="mint" sub={`Goals + General · ${savingsRate}% of income`} />
@@ -2637,7 +2641,7 @@ function FinanceView({ transactions, goals, generalSavings, savingsAdjustment, o
                     </td>
                     <td style={{ padding: "12px 16px" }}>
                       <div style={{ display: "flex", gap: 5 }}>
-                        <IconBtn icon={Pencil} size={12} onClick={() => { if (selectMode) return; openModal("transaction-edit", t); }} title="Edit" />
+                        {showEditButtons && <IconBtn icon={Pencil} size={12} onClick={() => { if (selectMode) return; openModal("transaction-edit", t); }} title="Edit" />}
                         <IconBtn icon={Trash2} size={12} danger onClick={() => { if (selectMode) return; setConfirmDelete(t); }} title="Delete" />
                       </div>
                     </td>
@@ -2795,7 +2799,7 @@ function TransactionViewModal({ transaction, onClose, onEdit, onDeleteRequest })
 /* Budgets view                                                          */
 /* ---------------------------------------------------------------------- */
 
-function BudgetsView({ budgets, transactions, openModal, deleteBudget }) {
+function BudgetsView({ budgets, transactions, openModal, deleteBudget, showEditButtons = true }) {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const spentByCategory = useMemo(() => {
     const map = {};
@@ -2827,7 +2831,7 @@ function BudgetsView({ budgets, transactions, openModal, deleteBudget }) {
                       <div style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "capitalize" }}>{b.period}</div>
                     </div>
                     <div style={{ display: "flex", gap: 5 }}>
-                      <IconBtn icon={Pencil} size={12} onClick={() => openModal("budget-edit", b)} title="Edit" />
+                      {showEditButtons && <IconBtn icon={Pencil} size={12} onClick={() => openModal("budget-edit", b)} title="Edit" />}
                       <IconBtn icon={Trash2} size={12} danger onClick={() => setConfirmDelete(b)} title="Delete" />
                     </div>
                   </div>
@@ -3083,7 +3087,7 @@ function GeneralSavingsCard({ generalSavings, openModal }) {
   );
 }
 
-function GoalsView({ goals, generalSavings, openModal, deleteGoal }) {
+function GoalsView({ goals, generalSavings, openModal, deleteGoal, showEditButtons = true }) {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [showCalc, setShowCalc] = useState(false);
 
@@ -3119,7 +3123,7 @@ function GoalsView({ goals, generalSavings, openModal, deleteGoal }) {
                       <div style={{ marginTop: 4 }}><Badge>{g.category}</Badge></div>
                     </div>
                     <div style={{ display: "flex", gap: 5 }}>
-                      <IconBtn icon={Pencil} size={12} onClick={() => openModal("goal-edit", g)} title="Edit" />
+                      {showEditButtons && <IconBtn icon={Pencil} size={12} onClick={() => openModal("goal-edit", g)} title="Edit" />}
                       <IconBtn icon={Trash2} size={12} danger onClick={() => setConfirmDelete(g)} title="Delete" />
                     </div>
                   </div>
@@ -5159,6 +5163,9 @@ function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessi
           <SettingRow label="Hide financial values by default" sub="Mask amounts on the Finance page until revealed">
             <Toggle checked={settings.hideFinance} onChange={(v) => setSettings((s) => ({ ...s, hideFinance: v }))} />
           </SettingRow>
+          <SettingRow label="Show edit buttons in Finance" sub="Show or hide the small pencil buttons for transactions, budgets, and savings goals">
+            <Toggle checked={settings.showFinanceEditButtons !== false} onChange={(v) => setSettings((s) => ({ ...s, showFinanceEditButtons: v }))} />
+          </SettingRow>
           <SettingRow label="Hide sensitive info by default" sub="Passwords and notes stay masked until you choose to reveal them">
             <Toggle checked={settings.hideSensitive} onChange={(v) => setSettings((s) => ({ ...s, hideSensitive: v }))} />
           </SettingRow>
@@ -5368,7 +5375,7 @@ function ChangePinModal({ onCancel, onSubmit, onSuccess }) {
 
 const DEFAULT_SETTINGS = {
   twoFA: true, biometric: false, autoLock: "5", securityNotifs: true,
-  clipboardTimeout: "30", hideFinance: false, hideSensitive: true,
+  clipboardTimeout: "30", hideFinance: false, hideSensitive: true, showFinanceEditButtons: true,
 };
 const DEFAULT_AUTH = { username: "jreyes", email: "j.reyes@gmail.com", avatar: null };
 
@@ -6244,13 +6251,13 @@ export default function App() {
           <NotesView notes={notes} openModal={openModal} deleteNote={deleteNote} togglePin={togglePin} toggleArchive={toggleArchive} locked={locked} onImportNotes={importNotes} />
         )}
         {view === "finance" && (
-          <FinanceView transactions={transactions} goals={goals} generalSavings={generalSavings} savingsAdjustment={savingsAdjustment} onAdjustSavings={setSavingsAdjustment} openModal={openModal} deleteTransaction={deleteTransaction} hideValues={settings.hideFinance} />
+          <FinanceView transactions={transactions} goals={goals} generalSavings={generalSavings} savingsAdjustment={savingsAdjustment} onAdjustSavings={setSavingsAdjustment} openModal={openModal} deleteTransaction={deleteTransaction} hideValues={settings.hideFinance} showEditButtons={settings.showFinanceEditButtons !== false} />
         )}
         {view === "budgets" && (
-          <BudgetsView budgets={budgets} transactions={transactions} openModal={openModal} deleteBudget={deleteBudget} />
+          <BudgetsView budgets={budgets} transactions={transactions} openModal={openModal} deleteBudget={deleteBudget} showEditButtons={settings.showFinanceEditButtons !== false} />
         )}
         {view === "goals" && (
-          <GoalsView goals={goals} generalSavings={generalSavings} openModal={openModal} deleteGoal={deleteGoal} />
+          <GoalsView goals={goals} generalSavings={generalSavings} openModal={openModal} deleteGoal={deleteGoal} showEditButtons={settings.showFinanceEditButtons !== false} />
         )}
         {view === "vision" && <VisionBoardView items={visionItems} setItems={setVisionItems} toast={toast} onMoveToTrash={(vision) => {
           setVisionItems((vs) => vs.filter((v) => v.id !== vision.id));
