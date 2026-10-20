@@ -1,0 +1,179 @@
+
+/* =========================================================
+   SECUREVAULT — ANDROID MOBILE RESPONSIVE THEME
+   Keeps desktop styling intact on larger screens.
+   ========================================================= */
+
+:root {
+  --sv-mobile-bg: #0b0f14;
+  --sv-mobile-surface: #121923;
+  --sv-mobile-surface-2: #18222e;
+  --sv-mobile-border: rgba(255, 255, 255, 0.09);
+  --sv-mobile-text: #f4f7fb;
+  --sv-mobile-muted: #98a6b8;
+  --sv-mobile-accent: #69a7ff;
+  --sv-mobile-radius: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100%;
+  margin: 0;
+  background: var(--sv-mobile-bg);
+  color: var(--sv-mobile-text);
+  overscroll-behavior-y: contain;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  touch-action: manipulation;
+}
+
+input,
+select,
+textarea {
+  max-width: 100%;
+}
+
+/* Android-sized screens */
+@media screen and (max-width: 767px) {
+  html,
+  body,
+  #root {
+    width: 100%;
+    min-width: 0;
+    min-height: 100%;
+  }
+
+  body {
+    overflow-x: hidden;
+    font-size: 14px;
+  }
+
+  #root {
+    min-height: 100dvh;
+  }
+
+  /* Prevent desktop fixed widths from causing horizontal scrolling */
+  #root > *,
+  #root main,
+  #root section,
+  #root aside,
+  #root header,
+  #root footer {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* More comfortable touch targets */
+  button,
+  [role="button"] {
+    min-height: 42px;
+  }
+
+  input,
+  select,
+  textarea {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  textarea {
+    min-height: 100px;
+  }
+
+  /* Mobile-friendly scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #344253 transparent;
+  }
+
+  /* Cards */
+  [class*="card"],
+  [class*="Card"],
+  [class*="panel"],
+  [class*="Panel"] {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  /* Responsive grids */
+  [class*="grid"],
+  [class*="Grid"] {
+    min-width: 0;
+  }
+
+  /* Tables should scroll instead of expanding the whole screen */
+  table {
+    max-width: 100%;
+  }
+
+  /* Avoid oversized headings */
+  h1 {
+    font-size: clamp(1.5rem, 6vw, 2rem);
+    line-height: 1.2;
+  }
+
+  h2 {
+    font-size: clamp(1.2rem, 5vw, 1.6rem);
+    line-height: 1.3;
+  }
+
+  h3 {
+    font-size: 1.05rem;
+    line-height: 1.35;
+  }
+
+  /* Dialogs and popups should fit the viewport */
+  [role="dialog"],
+  [aria-modal="true"] {
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 32px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* Respect Android display cutouts and gesture areas */
+  .sv-mobile-bottom-nav {
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  .sv-mobile-page {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+/* Small phones */
+@media screen and (max-width: 380px) {
+  .sv-mobile-page {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  button {
+    max-width: 100%;
+  }
+}
+
+/* Tablets and desktop: do not apply the phone-specific layout */
+@media screen and (min-width: 768px) {
+  .sv-mobile-bottom-nav {
+    display: none;
+  }
+}
