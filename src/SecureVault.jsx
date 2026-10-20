@@ -1648,6 +1648,8 @@ function resizeImageFileToAspect(file, targetWidth, targetHeight, quality = 0.85
 }
 
 function Sidebar({ view, setView, onLock, theme, toggleTheme, counts, serverStatus, auth }) {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const activeItem = NAV.find((item) => item.key === view) || NAV[0];
   return (
     <div style={{
       width: 236, flexShrink: 0, borderRight: "1px solid var(--border)", background: "var(--surface)",
@@ -1675,14 +1677,26 @@ function Sidebar({ view, setView, onLock, theme, toggleTheme, counts, serverStat
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "6px 12px" }} className="sv-scroll">
+      <button
+        type="button"
+        className="sv-mobile-menu-toggle"
+        aria-expanded={mobileMenuOpen}
+        aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+        onClick={() => setMobileMenuOpen((open) => !open)}
+      >
+        <span className="sv-hamburger-glyph" aria-hidden="true">{mobileMenuOpen ? "×" : "☰"}</span>
+        <span className="sv-mobile-menu-current">{activeItem.label}</span>
+        <span className="sv-mobile-menu-hint">{mobileMenuOpen ? "Close" : "Menu"}</span>
+      </button>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "6px 12px" }} className={`sv-scroll sv-navigation-list${mobileMenuOpen ? " sv-navigation-list-open" : ""}`}>
         {NAV.map((item) => {
           const active = view === item.key;
           const count = counts?.[item.key];
           return (
             <button
               key={item.key}
-              onClick={() => setView(item.key)}
+              onClick={() => { setView(item.key); setMobileMenuOpen(false); }}
               className="sv-focus"
               style={{
                 width: "100%", display: "flex", alignItems: "center", gap: 10, textAlign: "left",
