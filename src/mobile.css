@@ -94,7 +94,23 @@ video {
     border-right: 0 !important;
     border-bottom: 1px solid var(--border) !important;
     padding: 0 0 4px !important;
+    flex: 0 0 auto !important;
     z-index: 5;
+  }
+
+  /* The dashboard must sit directly below the compact mobile header. */
+  .sv-root > .sv-scroll {
+    position: relative !important;
+    flex: 1 1 0 !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+  }
+
+  /* Keep the navigation drawer out of the normal header flow. */
+  .sv-root > div:first-of-type > .sv-navigation-list {
+    flex: 0 0 auto !important;
   }
 
   /* Brand */
@@ -223,7 +239,7 @@ video {
   }
 
   /* Main content scrolls independently */
-  .sv-root > div:nth-child(2) {
+  .sv-root > .sv-scroll {
     width: 100% !important;
     min-width: 0 !important;
     max-width: 100% !important;
@@ -238,7 +254,7 @@ video {
     padding-bottom: 24px;
   }
 
-  .sv-root > div:nth-child(2) > div {
+  .sv-root > .sv-scroll > div {
     min-width: 0 !important;
     max-width: 100% !important;
   }
@@ -278,14 +294,14 @@ video {
   }
 
   /* Normalize page padding */
-  .sv-root > div:nth-child(2) [style*="padding: 22px 28px"],
-  .sv-root > div:nth-child(2) [style*="padding: 24px 28px"],
-  .sv-root > div:nth-child(2) [style*="padding: 28px"] {
+  .sv-root > .sv-scroll [style*="padding: 22px 28px"],
+  .sv-root > .sv-scroll [style*="padding: 24px 28px"],
+  .sv-root > .sv-scroll [style*="padding: 28px"] {
     padding: 18px 16px !important;
   }
 
-  .sv-root > div:nth-child(2) [style*="padding: 0 28px"],
-  .sv-root > div:nth-child(2) [style*="padding: 0px 28px"] {
+  .sv-root > .sv-scroll [style*="padding: 0 28px"],
+  .sv-root > .sv-scroll [style*="padding: 0px 28px"] {
     padding-left: 16px !important;
     padding-right: 16px !important;
   }
@@ -355,7 +371,7 @@ video {
 
   /* Hide scrollbars without disabling scrolling */
   .sv-scroll,
-  .sv-root > div:nth-child(2),
+  .sv-root > .sv-scroll,
   .sv-navigation-list,
   [role="dialog"],
   .sv-root table {
@@ -380,8 +396,8 @@ video {
     padding: 6px 10px !important;
   }
 
-  .sv-root > div:nth-child(2) [style*="padding: 22px 28px"],
-  .sv-root > div:nth-child(2) [style*="padding: 24px 28px"] {
+  .sv-root > .sv-scroll [style*="padding: 22px 28px"],
+  .sv-root > .sv-scroll [style*="padding: 24px 28px"] {
     padding: 15px 12px !important;
   }
 }
@@ -409,5 +425,157 @@ video {
 @media (prefers-reduced-motion: reduce) {
   .sv-navigation-list {
     transition: none !important;
+  }
+}
+
+/* FINAL MOBILE FIX: Android status-bar safe area + half-screen drawer */
+@media (max-width: 767px) {
+  .sv-root {
+    box-sizing: border-box !important;
+    height: 100dvh !important;
+    min-height: 0 !important;
+    max-height: 100dvh !important;
+    padding-top: max(env(safe-area-inset-top, 0px), 32px) !important;
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 4px) !important;
+  }
+
+  /* All app content begins below the Android status/notification bar. */
+  .sv-root > div:first-of-type {
+    flex: 0 0 auto !important;
+    z-index: 20 !important;
+  }
+
+  .sv-root > div:first-of-type > button.sv-mobile-menu-toggle {
+    top: 8px !important;
+    right: 14px !important;
+    left: auto !important;
+    z-index: 10030 !important;
+    pointer-events: auto !important;
+  }
+
+  .sv-root > .sv-scroll:not(.sv-navigation-list) {
+    position: relative !important;
+    z-index: 1 !important;
+    flex: 1 1 0% !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding-bottom: 24px !important;
+    pointer-events: auto !important;
+  }
+
+  /* Half-screen navigation panel, below the system status bar. */
+  .sv-root > div:first-of-type > .sv-navigation-list {
+    position: fixed !important;
+    top: max(env(safe-area-inset-top, 0px), 32px) !important;
+    bottom: max(env(safe-area-inset-bottom, 0px), 0px) !important;
+    left: 0 !important;
+    width: 50vw !important;
+    min-width: 190px !important;
+    max-width: 300px !important;
+    height: auto !important;
+    max-height: none !important;
+    padding: 14px 12px 18px !important;
+    display: block !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    background: var(--surface) !important;
+    border-right: 1px solid var(--border) !important;
+    border-top: 1px solid var(--border) !important;
+    border-radius: 0 0 16px 0 !important;
+    box-shadow: 12px 12px 35px rgba(0,0,0,.35) !important;
+    z-index: 10020 !important;
+    transform: translateX(-105%);
+    visibility: hidden;
+    pointer-events: none;
+    transition: transform .22s ease, visibility .22s ease;
+  }
+
+  .sv-root > div:first-of-type > .sv-navigation-list.sv-navigation-list-open {
+    transform: translateX(0) !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+  }
+
+  .sv-navigation-list > button {
+    position: relative !important;
+    z-index: 1 !important;
+    min-height: 42px !important;
+    padding: 10px !important;
+    margin-bottom: 4px !important;
+    pointer-events: auto !important;
+  }
+
+  .sv-mobile-drawer-account {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    margin-top: 14px !important;
+    padding-top: 14px !important;
+    border-top: 1px solid var(--border) !important;
+  }
+
+  .sv-mobile-drawer-profile {
+    display: flex !important;
+    align-items: center !important;
+    gap: 9px !important;
+    min-width: 0 !important;
+    padding: 4px 2px 8px !important;
+  }
+
+  .sv-mobile-drawer-profile-copy {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+  }
+
+  .sv-mobile-drawer-username {
+    color: var(--text) !important;
+    font-size: 13px !important;
+    font-weight: 650 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .sv-mobile-drawer-email {
+    color: var(--text-faint) !important;
+    font-size: 11px !important;
+    overflow-wrap: anywhere !important;
+  }
+
+  .sv-mobile-drawer-theme,
+  .sv-mobile-drawer-lock {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    width: 100% !important;
+    min-height: 42px !important;
+    padding: 10px !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 9px !important;
+    background: var(--surface-2) !important;
+    color: var(--text) !important;
+    text-align: left !important;
+    font-size: 12px !important;
+    cursor: pointer !important;
+    pointer-events: auto !important;
+  }
+
+  .sv-mobile-drawer-theme svg,
+  .sv-mobile-drawer-lock svg {
+    flex: 0 0 auto !important;
+    color: var(--primary) !important;
+  }
+
+  /* The original account footer stays visible on desktop only. */
+  .sv-root > div:first-of-type > div:last-child {
+    display: none !important;
+  }
+}
+
+@media (min-width: 768px) {
+  .sv-mobile-drawer-account {
+    display: none !important;
   }
 }

@@ -1712,6 +1712,25 @@ function Sidebar({ view, setView, onLock, theme, toggleTheme, counts, serverStat
             </button>
           );
         })}
+
+        {/* Mobile account and appearance controls live inside the hamburger drawer. */}
+        <div className="sv-mobile-drawer-account">
+          <div className="sv-mobile-drawer-profile">
+            <Avatar src={auth?.avatar} name={auth?.username} />
+            <div className="sv-mobile-drawer-profile-copy">
+              <div className="sv-mobile-drawer-username">{auth?.username || "User"}</div>
+              <div className="sv-mobile-drawer-email">{auth?.email || ""}</div>
+            </div>
+          </div>
+          <button type="button" className="sv-mobile-drawer-theme" onClick={toggleTheme}>
+            {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+            <span>{theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}</span>
+          </button>
+          <button type="button" className="sv-mobile-drawer-lock" onClick={() => { setMobileMenuOpen(false); onLock(); }}>
+            <Lock size={16} />
+            <span>Lock Vault</span>
+          </button>
+        </div>
       </div>
 
       <div style={{ padding: 12, borderTop: "1px solid var(--border)" }}>
