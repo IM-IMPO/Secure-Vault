@@ -11,7 +11,7 @@ import {
   LogOut, Bell, ListChecks, Zap, Target, Calendar, MapPin, PartyPopper, CalendarDays,
   RotateCcw, Paperclip, Download, File as FileIcon, Upload,
   Users, Phone, Mail, Building2, Star, Image as ImageIcon2, Camera,
-  Calculator as CalculatorIcon, Delete as BackspaceIcon, Repeat
+  Calculator as CalculatorIcon, Delete as BackspaceIcon, Repeat, Menu
 } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -1681,13 +1681,22 @@ function Sidebar({ view, setView, onLock, theme, toggleTheme, counts, serverStat
         type="button"
         className="sv-mobile-menu-toggle"
         aria-expanded={mobileMenuOpen}
-        aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+        aria-label="Open navigation menu"
         onClick={() => setMobileMenuOpen((open) => !open)}
+        style={{ position: "absolute", top: 9, right: 14, left: "auto", zIndex: 10040 }}
       >
-        <span className="sv-hamburger-glyph" aria-hidden="true">{mobileMenuOpen ? "×" : "☰"}</span>
-        <span className="sv-mobile-menu-current">{activeItem.label}</span>
-        <span className="sv-mobile-menu-hint">{mobileMenuOpen ? "Close" : "Menu"}</span>
+        <Menu size={22} aria-hidden="true" />
       </button>
+
+      {mobileMenuOpen && (
+        <button
+          type="button"
+          className="sv-mobile-menu-backdrop"
+          aria-label="Close navigation menu"
+          onClick={() => setMobileMenuOpen(false)}
+          style={{ position: "fixed", inset: "28px 0 0 0", zIndex: 10010 }}
+        />
+      )}
 
       <div style={{ flex: 1, overflowY: "auto", padding: "6px 12px" }} className={`sv-scroll sv-navigation-list${mobileMenuOpen ? " sv-navigation-list-open" : ""}`}>
         {NAV.map((item) => {
