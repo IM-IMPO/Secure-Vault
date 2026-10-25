@@ -38,4 +38,15 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The vault file lives in the app's own external files dir
+         (Android/data/com.imimpo.securevault/files/data). On Android 13+ no
+         storage permission is needed at all. On Android 10-12 the Filesystem
+         plugin still asks, so declare them (capped) or the request can never
+         be granted and saving would silently fail there. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
 </manifest>
