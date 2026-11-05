@@ -4,7 +4,7 @@ import { argon2id } from "hash-wasm";
 import {
   Lock, Unlock, Eye, EyeOff, Copy, Search, Plus, Settings as SettingsIcon,
   Shield, CreditCard, FileText, LayoutDashboard, TrendingUp, TrendingDown,
-  Wallet, AlertTriangle, CheckCircle2, X, Trash2, Pencil, Pin, Archive,
+  Wallet, AlertTriangle, CheckCircle2, Check, X, Trash2, Pencil, Pin, Archive,
   Moon, Sun, ChevronRight, ChevronLeft, RefreshCw, Fingerprint, KeyRound, Clock,
   ExternalLink, PiggyBank, ShieldCheck, ShieldAlert, Smartphone, Globe,
   ArrowUpRight, ArrowDownRight, Tag, Filter, ArrowUpDown, Sparkles,
@@ -17,8 +17,35 @@ import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, AreaChart, Area
 } from "recharts";
+// Capacitor's Filesystem plugin — the only supported way to read/write a real
+// file from the Android APK. Imported (not window.Capacitor.Filesystem, which
+// is never populated) so the native plugin is registered on Android.
+import { Filesystem, Directory, Encoding } from "@capacitor/filesystem";
+import { registerPlugin } from "@capacitor/core";
 
 /* ---------------------------------------------------------------------- */
+/* Platform detection                                                      */
+/* ---------------------------------------------------------------------- */
+
+/* True only inside the Capacitor Android APK. A phone has no keyboard, so
+   desktop-only affordances (the Ctrl-K hint on the search bar) are dropped
+   there while staying intact on desktop. */
+/* ---------------------------------------------------------------------- */
+const IS_ANDROID_APP = (() => {
+  try {
+    if (typeof window !== "undefined" && window.Capacitor &&
+        typeof window.Capacitor.getPlatform === "function" &&
+        window.Capacitor.getPlatform() === "android") {
+      return true;
+    }
+  } catch (e) { /* not running inside Capacitor — fall through to UA check */ }
+  try {
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    /* "wv" marks an Android WebView, so a desktop browser is never matched. */
+    return /Android/i.test(ua) && /(?:wv|Capacitor|SecureVault)/i.test(ua);
+  } catch (e) { return false; }
+})();
+
 /* Fonts + theme                                                          */
 /* ---------------------------------------------------------------------- */
 
@@ -267,9 +294,17 @@ async function encryptVaultData(vaultKeyBytes, dataObj) {
 }
 
 /* ---------------------------------------------------------------------- */
-/* Local-only persistence — the encrypted envelope is saved as a real     */
-/* file in D:\Local Data via the small local server (server.js). The      */
-/* server only ever sees ciphertext, salts, and KDF parameters.           */
+/* Local-only persistence.                                                 */
+/*                                                                         */
+/* Desktop: the encrypted envelope is saved as a real file on disk by the  */
+/* tiny local server (server.js). The server only ever sees ciphertext,    */
+/* salts and KDF parameters.                                               */
+/*                                                                         */
+/* Android: the app is fully standalone, so the envelope is written        */
+/* straight into the app's own external files directory:                   */
+/*   /storage/emulated/0/Android/data/com.imimpo.securevault/files/data/   */
+/* That folder belongs to the app and needs NO runtime storage permission  */
+/* on Android 10+, which is why the APK never prompts for access.          */
 /* ---------------------------------------------------------------------- */
 
 const SV_API = `http://localhost:${(typeof window !== "undefined" && window.SV_PORT) || 4787}`;
@@ -284,7 +319,121 @@ async function pingLocalServer() {
   }
 }
 
+// ---- Android local storage ----------------------------------------------
+
+const ANDROID_APP_ID = "com.imimpo.securevault";
+const ANDROID_DATA_DIR = "data";
+const ANDROID_DATA_FILE = "securevault-data.json";
+const ANDROID_BACKUP_DIR = "backups";
+const ANDROID_BACKUP_FILE = "securevault-backup.json";
+// Exact on-device locations, shown in Settings so it's obvious where to look.
+const ANDROID_DATA_PATH =
+  `/storage/emulated/0/Android/data/${ANDROID_APP_ID}/files/${ANDROID_DATA_DIR}/${ANDROID_DATA_FILE}`;
+const ANDROID_BACKUP_PATH =
+  `/storage/emulated/0/Android/data/${ANDROID_APP_ID}/files/${ANDROID_BACKUP_DIR}/${ANDROID_BACKUP_FILE}`;
+
+// True only when running as the Capacitor Android APK, where the vault is a
+// plain file on the device (there is no local server on a phone).
+function isAndroidRuntime() {
+  if (!IS_ANDROID_APP) return false;
+  try {
+    return !!window.Capacitor && typeof window.Capacitor.getPlatform === "function" &&
+      window.Capacitor.getPlatform() === "android";
+  } catch {
+    return false;
+  }
+}
+
+// window.Capacitor.Filesystem is never populated by Capacitor, so fall back
+// to the plugin instance imported above.
+function androidFilesystem() {
+  if (!isAndroidRuntime()) return null;
+  try {
+    if (window.Capacitor && window.Capacitor.Filesystem) return window.Capacitor.Filesystem;
+  } catch { /* ignore */ }
+  return Filesystem;
+}
+
+// Android biometric unlock. A small native plugin wraps the vault key in an
+// Android Keystore key whose material only becomes usable after a successful
+// fingerprint/face prompt — the same shape as Windows Hello on desktop.
+const NativeBiometric = registerPlugin("Biometric");
+
+function androidBiometric() {
+  if (!isAndroidRuntime()) return null;
+  // No isPluginAvailable() check: that only knows about JS-registered plugins
+  // and the bridge's plugin headers, and a plugin registered purely in
+  // MainActivity may not appear there. Callers wrap this in try/catch anyway.
+  return NativeBiometric;
+}
+
+// The lock screen and Settings shouldn't say "Windows Hello" on a phone.
+function biometricLabel() {
+  return IS_ANDROID_APP ? "fingerprint or face" : "Windows Hello";
+}
+
+async function readAndroidEnvelope() {
+  const fs = androidFilesystem();
+  if (!fs) return null;
+  try {
+    const { data } = await fs.readFile({
+      directory: Directory.External,
+      path: `${ANDROID_DATA_DIR}/${ANDROID_DATA_FILE}`,
+      encoding: Encoding.UTF8,
+    });
+    return JSON.parse(data);
+  } catch {
+    // A missing file simply means no vault has been created on this device
+    // yet — that's the normal first-run case, not an error.
+    return null;
+  }
+}
+
+// Last Android write failure, surfaced in the save warning so a failure is
+// diagnosable instead of reading as "the app just won't save".
+let lastAndroidWriteError = "";
+
+async function writeAndroidEnvelope(envelope) {
+  const fs = androidFilesystem();
+  if (!fs) { lastAndroidWriteError = "Filesystem plugin unavailable"; return false; }
+  try {
+    // `recursive` makes the plugin create the parent directory itself. Do NOT
+    // call mkdir() first: ionfilesystem's createDirOrFile throws
+    // CreateFailed.AlreadyExists whenever the target already exists, so a
+    // pre-emptive mkdir on every save after the first killed every write.
+    await fs.writeFile({
+      directory: Directory.External,
+      path: `${ANDROID_DATA_DIR}/${ANDROID_DATA_FILE}`,
+      data: JSON.stringify(envelope),
+      encoding: Encoding.UTF8,
+      recursive: true,
+    });
+    lastAndroidWriteError = "";
+    return true;
+  } catch (e) {
+    lastAndroidWriteError = (e && (e.message || e.toString())) || "unknown error";
+    return false;
+  }
+}
+
+async function deleteAndroidEnvelope() {
+  const fs = androidFilesystem();
+  if (!fs) return false;
+  try {
+    await fs.deleteFile({
+      directory: Directory.External,
+      path: `${ANDROID_DATA_DIR}/${ANDROID_DATA_FILE}`,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function loadEnvelope() {
+  if (isAndroidRuntime()) {
+    return { envelope: await readAndroidEnvelope(), integrity: null, ok: true };
+  }
   try {
     const res = await fetch(`${SV_API}/api/data`, { signal: AbortSignal.timeout(3000) });
     if (!res.ok) return { envelope: null, integrity: null, ok: false };
@@ -296,6 +445,7 @@ async function loadEnvelope() {
 }
 
 async function saveEnvelope(envelope) {
+  if (isAndroidRuntime()) return await writeAndroidEnvelope(envelope);
   try {
     const res = await fetch(`${SV_API}/api/data`, {
       method: "POST",
@@ -310,6 +460,7 @@ async function saveEnvelope(envelope) {
 }
 
 async function deleteEnvelope() {
+  if (isAndroidRuntime()) return await deleteAndroidEnvelope();
   try {
     const res = await fetch(`${SV_API}/api/data`, { method: "DELETE", signal: AbortSignal.timeout(3000) });
     return res.ok;
@@ -319,6 +470,28 @@ async function deleteEnvelope() {
 }
 
 async function backupNow() {
+  if (isAndroidRuntime()) {
+    const fs = androidFilesystem();
+    if (!fs) return { ok: false, error: "Filesystem not available" };
+    try {
+      const { data } = await fs.readFile({
+        directory: Directory.External,
+        path: `${ANDROID_DATA_DIR}/${ANDROID_DATA_FILE}`,
+        encoding: Encoding.UTF8,
+      });
+      // No mkdir() here — same AlreadyExists trap as writeAndroidEnvelope.
+      await fs.writeFile({
+        directory: Directory.External,
+        path: `${ANDROID_BACKUP_DIR}/${ANDROID_BACKUP_FILE}`,
+        data: JSON.stringify(JSON.parse(data), null, 2),
+        encoding: Encoding.UTF8,
+        recursive: true,
+      });
+      return { ok: true, backupFile: ANDROID_BACKUP_PATH };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || "Backup failed" };
+    }
+  }
   try {
     const res = await fetch(`${SV_API}/api/backup`, { method: "POST", signal: AbortSignal.timeout(5000) });
     const body = await res.json().catch(() => ({}));
@@ -777,7 +950,7 @@ function Modal({ title, onClose, children, width = 480 }) {
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{
         position: "fixed", inset: 0, background: "rgba(4,7,10,0.6)", backdropFilter: "blur(2px)",
-        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 150, padding: 20
       }}
     >
       <div className="sv-fade-in sv-scroll" style={{
@@ -1027,7 +1200,7 @@ function LockScreen({ onUnlockWithPassword, onUnlockWithPin, onUnlockWithBiometr
     setError(""); setBiometricBusy(true);
     const result = await onUnlockWithBiometric();
     setBiometricBusy(false);
-    if (!result.ok) setError(result.error || "Windows Hello unlock failed.");
+    if (!result.ok) setError(result.error || `${biometricLabel()} unlock failed.`);
   };
 
   return (
@@ -1042,21 +1215,19 @@ function LockScreen({ onUnlockWithPassword, onUnlockWithPin, onUnlockWithBiometr
           <div style={{
             width: 64, height: 64, borderRadius: 18, margin: "0 auto 16px", position: "relative", overflow: "hidden",
             background: "linear-gradient(160deg, var(--surface-2), var(--surface-3))",
-            border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center"
+            display: "flex", alignItems: "center", justifyContent: "center"
           }}>
             <Lock size={26} color="var(--primary)" />
-            <div className="sv-scanline" style={{
-              position: "absolute", left: 0, right: 0, height: 14,
-              background: "linear-gradient(180deg, transparent, rgba(76,124,243,0.35), transparent)"
-            }} />
           </div>
           <div className="sv-display" style={{ fontSize: 22, fontWeight: 700 }}>{appName}</div>
           <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 4 }}>
-            {busy ? "Deriving encryption key…" : biometricBusy ? "Follow the Windows Hello prompt…" : step === "password" ? "Sign in to your vault" : "Vault locked — enter your PIN to continue"}
+            {busy ? "Deriving encryption key…" : biometricBusy ? `Follow the ${biometricLabel()} prompt…` : step === "password" ? "Sign in to your vault" : "Vault locked — enter your PIN to continue"}
           </div>
         </div>
 
-        {serverStatus === "offline" && (
+        {/* Android has no local server — the vault is a file on the device, so the
+            "start node server.js" warning is wrong there and is hidden. */}
+        {!IS_ANDROID_APP && serverStatus === "offline" && (
           <div style={{
             display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, color: "var(--amber)",
             background: "var(--amber-soft)", border: "1px solid var(--border)", borderRadius: 10, padding: 12, marginBottom: 14
@@ -1074,15 +1245,15 @@ function LockScreen({ onUnlockWithPassword, onUnlockWithPin, onUnlockWithBiometr
               onClick={tryBiometric}
               disabled={busy || biometricBusy}
             >
-              <Fingerprint size={16} /> {biometricBusy ? "Waiting for Windows Hello…" : "Unlock with Windows Hello"}
+              <Fingerprint size={16} /> {biometricBusy ? `Waiting for ${biometricLabel()}…` : `Unlock with ${biometricLabel()}`}
             </Button>
           </div>
         )}
         {biometricSetUp && (
           <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "14px 0" }}>
-            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
-            <span style={{ fontSize: 11, color: "var(--text-faint)" }}>or</span>
-            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            <div style={{ flex: "1 1 42%", borderTop: 1, borderStyle: "solid", borderColor: "var(--border)", marginTop: 8, marginBottom: 8 }} />
+            <span style={{ fontSize: 11, color: "var(--text-faint)", letterSpacing: 1 }}>or</span>
+            <div style={{ flex: "1 1 42%", borderTop: 1, borderStyle: "solid", borderColor: "var(--border)", marginTop: 8, marginBottom: 8 }} />
           </div>
         )}
 
@@ -1125,7 +1296,7 @@ function LockScreen({ onUnlockWithPassword, onUnlockWithPin, onUnlockWithBiometr
           )}
         </Card>
         <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--text-faint)", marginTop: 16 }}>
-          {serverStatus === "connected"
+          {(serverStatus === "connected" || IS_ANDROID_APP)
             ? <>Encrypted (AES-256-GCM) and saved to <span className="sv-mono">{dataFilePath || "D:\\Local Data"}</span></>
             : "Zero-knowledge design — even SecureVault can't read your stored data without your password."}
         </div>
@@ -1160,13 +1331,13 @@ function VaultSetupScreen({ onCreate, serverStatus, dataFilePath }) {
           <div style={{
             width: 64, height: 64, borderRadius: 18, margin: "0 auto 16px",
             background: "linear-gradient(160deg, var(--surface-2), var(--surface-3))",
-            border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center"
+            display: "flex", alignItems: "center", justifyContent: "center"
           }}>
             <ShieldCheck size={26} color="var(--primary)" />
           </div>
           <div className="sv-display" style={{ fontSize: 22, fontWeight: 700 }}>Create your vault</div>
           <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 4 }}>
-            No vault found yet{serverStatus === "connected" ? <> at <span className="sv-mono">{dataFilePath}</span></> : ""}. Set a master password to encrypt it.
+            No vault found yet{serverStatus === "connected" ? <> at <span className="sv-mono">{dataFilePath}</span></> : IS_ANDROID_APP ? " on this device" : ""}. Set a master password to encrypt it.
           </div>
         </div>
         <Card>
@@ -1666,14 +1837,14 @@ function Sidebar({ view, setView, onLock, theme, toggleTheme, counts, serverStat
       </div>
 
       <div style={{ padding: "0 18px 12px" }}>
-        <div title={serverStatus === "connected" ? "Saving to D:\\Local Data" : "Local server not running — changes won't be saved"} style={{
-          display: "flex", alignItems: "center", gap: 6, fontSize: 10.5, color: serverStatus === "connected" ? "var(--mint)" : "var(--coral)"
+        <div title={IS_ANDROID_APP ? "Saving to this device" : serverStatus === "connected" ? "Saving to D:\\Local Data" : "Local server not running — changes won't be saved"} style={{
+          display: "flex", alignItems: "center", gap: 6, fontSize: 10.5, color: (serverStatus === "connected" || IS_ANDROID_APP) ? "var(--mint)" : "var(--coral)"
         }}>
           <span style={{
             width: 6, height: 6, borderRadius: "50%",
-            background: serverStatus === "connected" ? "var(--mint)" : "var(--coral)"
+            background: (serverStatus === "connected" || IS_ANDROID_APP) ? "var(--mint)" : "var(--coral)"
           }} />
-          {serverStatus === "connected" ? "Local save: D:\\Local Data" : "Local server offline"}
+          {serverStatus === "connected" ? "Local save: D:\\Local Data" : IS_ANDROID_APP ? "Saved on this device" : "Local server offline"}
         </div>
       </div>
 
@@ -1681,7 +1852,7 @@ function Sidebar({ view, setView, onLock, theme, toggleTheme, counts, serverStat
         type="button"
         className="sv-mobile-menu-toggle"
         aria-expanded={mobileMenuOpen}
-        aria-label="Open navigation menu"
+        aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
         onClick={() => setMobileMenuOpen((open) => !open)}
         style={{ position: "absolute", top: 9, right: 14, left: "auto", zIndex: 10040 }}
       >
@@ -1694,7 +1865,7 @@ function Sidebar({ view, setView, onLock, theme, toggleTheme, counts, serverStat
           className="sv-mobile-menu-backdrop"
           aria-label="Close navigation menu"
           onClick={() => setMobileMenuOpen(false)}
-          style={{ position: "fixed", inset: "28px 0 0 0", zIndex: 10010 }}
+          style={{ position: "fixed", inset: "0 0 0 0", zIndex: 10010 }}
         />
       )}
 
@@ -1769,26 +1940,40 @@ function Sidebar({ view, setView, onLock, theme, toggleTheme, counts, serverStat
 /* TopBar with global search                                              */
 /* ---------------------------------------------------------------------- */
 
+let topBarSearchFallback = () => {};
+
+function registerTopBarSearchFallback(fn) { topBarSearchFallback = fn; }
+
 function TopBar({ title, subtitle, onOpenSearch, right }) {
   return (
-    <div style={{
+    <div className="sv-topbar" style={{
       display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
       padding: "22px 28px 18px", flexWrap: "wrap"
     }}>
-      <div>
+      <div className="sv-topbar-title">
         <h1 className="sv-display" style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{title}</h1>
         {subtitle && <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 3 }}>{subtitle}</div>}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <button onClick={onOpenSearch} className="sv-focus" style={{
-          display: "flex", alignItems: "center", gap: 8, background: "var(--surface-2)",
-          border: "1px solid var(--border)", borderRadius: 9, padding: "8px 12px", color: "var(--text-faint)",
-          cursor: "pointer", fontSize: 12.5
-        }}>
-          <Search size={14} /> Search everything
-          <span className="sv-mono" style={{ background: "var(--surface-3)", padding: "1px 6px", borderRadius: 5, fontSize: 10.5, marginLeft: 4 }}>Ctrl K</span>
+      <div className="sv-topbar-actions" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0 }}>
+        <button
+          type="button"
+          onClick={onOpenSearch || topBarSearchFallback}
+          aria-label="Search everything"
+          className="sv-focus sv-topbar-search"
+          style={{
+            display: "flex", alignItems: "center", gap: 8, background: "var(--surface-2)",
+            border: "1px solid var(--border)", borderRadius: 9, padding: "8px 12px", color: "var(--text-faint)",
+            cursor: "pointer", fontSize: 12.5, whiteSpace: "nowrap", minWidth: 0
+          }}
+        >
+          <Search size={14} />
+          <span className="sv-topbar-search-label">Search everything</span>
+          {/* No keyboard on the Android APK — drop the desktop shortcut hint there. */}
+          {!IS_ANDROID_APP && (
+            <span className="sv-mono sv-topbar-kbd" style={{ background: "var(--surface-3)", padding: "1px 6px", borderRadius: 5, fontSize: 10.5, marginLeft: 4 }}>Ctrl K</span>
+          )}
         </button>
-        {right}
+        <div className="sv-topbar-right" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0 }}>{right}</div>
       </div>
     </div>
   );
@@ -2021,7 +2206,7 @@ function PasswordsView({ passwords, openModal, deletePassword, logActivity, toas
 
   return (
     <div>
-      <TopBar title="Passwords" subtitle={`${passwords.length} saved credentials`}
+      <TopBar title="Passwords" subtitle={`${passwords.length} saved credentials`} onOpenSearch={() => openModal("search")}
         right={<><Button variant="subtle" onClick={() => { setSelectMode((v) => !v); if (selectMode) setSelected(new Set()); }}>{selectMode ? "Cancel select" : "Select"}</Button>{selectMode && selected.size > 0 && <Button variant="danger" onClick={() => { selected.forEach((id) => deletePassword(id)); setSelected(new Set()); setSelectMode(false); }}>Delete selected ({selected.size})</Button>}<Button icon={Plus} onClick={() => openModal("password-add")}>Add password</Button></>} />
       <div style={{ padding: "0 28px 28px" }}>
         {selectMode && <div style={{ marginBottom: 10, fontSize: 12, color: "var(--text-muted)" }}>Click any password row to select it. Selected rows are highlighted.</div>}
@@ -2242,7 +2427,7 @@ function NotesView({ notes, openModal, deleteNote, togglePin, toggleArchive, loc
 
   return (
     <div>
-      <TopBar title="Secure Notes" subtitle={`${notes.filter(n=>!n.archived).length} active notes`}
+      <TopBar title="Secure Notes" subtitle={`${notes.filter(n=>!n.archived).length} active notes`} onOpenSearch={() => openModal("search")}
         right={<>
           <input ref={importInputRef} type="file" multiple accept=".txt,.md,.markdown,.text,text/plain,text/markdown" onChange={handleImportFiles} style={{ display: "none" }} />
           <Button variant="subtle" icon={Upload} onClick={() => importInputRef.current?.click()} disabled={importing}>
@@ -2557,7 +2742,7 @@ function FinanceView({ transactions, goals, generalSavings, savingsAdjustment, o
 
   return (
     <div>
-      <TopBar title="Finance" subtitle="Income, expenses, and balance at a glance"
+      <TopBar title="Finance" subtitle="Income, expenses, and balance at a glance" onOpenSearch={() => openModal("search")}
         right={<>
           <Button variant="subtle" onClick={() => { setSelectMode((v) => !v); if (selectMode) setSelected(new Set()); }}>{selectMode ? "Cancel select" : "Select"}</Button>
           {selectMode && selected.size > 0 && <Button variant="danger" onClick={() => { selected.forEach((id) => deleteTransaction(id)); setSelected(new Set()); setSelectMode(false); }}>Delete selected ({selected.size})</Button>}
@@ -2853,7 +3038,7 @@ function BudgetsView({ budgets, transactions, openModal, deleteBudget, showEditB
 
   return (
     <div>
-      <TopBar title="Budgets" subtitle="Monthly spending limits by category"
+      <TopBar title="Budgets" subtitle="Monthly spending limits by category" onOpenSearch={() => openModal("search")}
         right={<Button icon={Plus} onClick={() => openModal("budget-add")}>Add budget</Button>} />
       <div style={{ padding: "0 28px 28px" }}>
         {budgets.length === 0 ? (
@@ -3059,7 +3244,7 @@ function Calculator({ onUseValue }) {
   };
 
   return (
-    <div style={{ width: 260 }}>
+    <div style={{ width: "100%", maxWidth: 300 }}>
       <div style={{
         background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12,
         padding: "14px 14px 10px", marginBottom: 12, textAlign: "right"
@@ -3075,7 +3260,7 @@ function Calculator({ onUseValue }) {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+      <div className="sv-numeric-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
         {BTN.flat().map((key, i) => (
           <button key={i} onClick={() => handleKey(key)} className="sv-focus" style={btnStyle(key)}>
             {key === "back" ? <BackspaceIcon size={16} /> : key}
@@ -3135,7 +3320,7 @@ function GoalsView({ goals, generalSavings, openModal, deleteGoal, showEditButto
 
   return (
     <div>
-      <TopBar title="Savings Goals" subtitle={`${goals.length} goal${goals.length === 1 ? "" : "s"} — separate money that never reduces your available balance`}
+      <TopBar title="Savings Goals" subtitle={`${goals.length} goal${goals.length === 1 ? "" : "s"} — separate money that never reduces your available balance`} onOpenSearch={() => openModal("search")}
         right={<>
           <Button variant="subtle" icon={CalculatorIcon} onClick={() => setShowCalc(true)}>Calculator</Button>
           <Button icon={Plus} onClick={() => openModal("goal-add")}>Add goal</Button>
@@ -3643,7 +3828,7 @@ function PlannerView({ events, openModal, deleteEvent, deleteOccurrence, toggleE
 
   return (
     <div>
-      <TopBar title="Planner" subtitle="Your schedule at a glance"
+      <TopBar title="Planner" subtitle="Your schedule at a glance" onOpenSearch={() => openModal("search")}
         right={<Button icon={Plus} onClick={() => openModal("event-add", { date: selectedDate })}>Add event</Button>} />
       <div style={{ padding: "0 28px 28px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 16, marginBottom: 16 }}>
@@ -3658,14 +3843,14 @@ function PlannerView({ events, openModal, deleteEvent, deleteOccurrence, toggleE
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 6 }}>
+            <div className="sv-cal-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 6 }}>
               {WEEKDAY_LABELS.map((d) => (
-                <div key={d} style={{ textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", padding: "4px 0" }}>{d}</div>
+                <div key={d} className="sv-cal-weekday" style={{ textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", padding: "4px 0" }}>{d}</div>
               ))}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+            <div className="sv-cal-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
               {grid.map((dateStr, i) => {
-                if (!dateStr) return <div key={i} style={{ minHeight: 68 }} />;
+                if (!dateStr) return <div key={i} className="sv-cal-blank" style={{ minHeight: 68 }} />;
                 const dayNum = Number(dateStr.slice(-2));
                 const dayEvents = eventsByDate[dateStr] || [];
                 const isToday = dateStr === todayStr();
@@ -3674,7 +3859,7 @@ function PlannerView({ events, openModal, deleteEvent, deleteOccurrence, toggleE
                   <button
                     key={i}
                     onClick={() => setSelectedDate(dateStr)}
-                    className="sv-focus"
+                    className="sv-focus sv-cal-day"
                     style={{
                       minHeight: 68, borderRadius: 9, padding: "6px 6px", textAlign: "left", cursor: "pointer",
                       border: isSelected ? "1px solid var(--primary)" : "1px solid var(--border)",
@@ -3682,7 +3867,7 @@ function PlannerView({ events, openModal, deleteEvent, deleteOccurrence, toggleE
                       display: "flex", flexDirection: "column", gap: 3, overflow: "hidden"
                     }}
                   >
-                    <span className="sv-mono" style={{
+                    <span className={"sv-mono sv-cal-daynum" + (isToday ? " sv-cal-today" : "")} style={{
                       fontSize: 11.5, fontWeight: isToday ? 700 : 500,
                       color: isToday ? "var(--primary)" : "var(--text)",
                       display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -3690,9 +3875,9 @@ function PlannerView({ events, openModal, deleteEvent, deleteOccurrence, toggleE
                       borderRadius: "50%", background: isToday ? "var(--primary)" : "transparent",
                       ...(isToday ? { color: "#fff" } : {})
                     }}>{dayNum}</span>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <div className="sv-cal-events" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                       {dayEvents.slice(0, 2).map((e) => (
-                        <div key={`${e.id}-${e.date}`} style={{
+                        <div key={`${e.id}-${e.date}`} className="sv-cal-event" style={{
                           display: "flex", alignItems: "center", gap: 3,
                           fontSize: 9.5, padding: "1px 4px", borderRadius: 4, color: "#fff", fontWeight: 600,
                           background: EVENT_CATEGORY_COLORS[e.category] || "var(--primary)",
@@ -3703,7 +3888,7 @@ function PlannerView({ events, openModal, deleteEvent, deleteOccurrence, toggleE
                           <span style={{ overflow: "hidden", textOverflow: "ellipsis", textDecoration: e.completed ? "line-through" : "none" }}>{e.title}</span>
                         </div>
                       ))}
-                      {dayEvents.length > 2 && <div style={{ fontSize: 9, color: "var(--text-faint)" }}>+{dayEvents.length - 2} more</div>}
+                      {dayEvents.length > 2 && <div className="sv-cal-more" style={{ fontSize: 9, color: "var(--text-faint)" }}>+{dayEvents.length - 2} more</div>}
                     </div>
                   </button>
                 );
@@ -3741,20 +3926,12 @@ function PlannerView({ events, openModal, deleteEvent, deleteOccurrence, toggleE
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 260, overflowY: "auto" }} className="sv-scroll">
                   {upcoming.map((e) => (
-                    <div key={`${e.id}-${e.date}`} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                      <button
-                        onClick={() => toggleEventComplete(e.id, e.date)}
-                        title={e.completed ? "Mark as not done" : "Mark as done"}
-                        className="sv-focus"
-                        style={{
-                          width: 15, height: 15, borderRadius: 4, flexShrink: 0, marginTop: 2, cursor: "pointer",
-                          border: `1.5px solid ${e.completed ? "var(--mint)" : "var(--text-faint)"}`,
-                          background: e.completed ? "var(--mint)" : "transparent",
-                          display: "flex", alignItems: "center", justifyContent: "center", padding: 0
-                        }}
-                      >
-                        {e.completed && <CheckCircle2 size={10} color="#0B0F14" strokeWidth={3.5} />}
-                      </button>
+                    <div key={`${e.id}-${e.date}`} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <CheckToggle
+                        checked={e.completed}
+                        onToggle={() => toggleEventComplete(e.id, e.date)}
+                        label={`Mark "${e.title}" as ${e.completed ? "not done" : "done"}`}
+                      />
                       <button onClick={() => jumpToDate(e.date)}
                         className="sv-focus" style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
                         <div style={{ width: 6, height: 6, borderRadius: "50%", background: EVENT_CATEGORY_COLORS[e.category] || "var(--primary)", flexShrink: 0 }} />
@@ -3883,23 +4060,60 @@ function DigitalClockCard() {
   );
 }
 
+/**
+ * Checkbox for the Planner rows.
+ *
+ * A native <input type="checkbox"> is styled by the WebView and comes out
+ * inconsistent, so the box is drawn here. The earlier version used a
+ * CheckCircle2 glyph at 10-12px inside a 15-18px box, which reads as a blob
+ * rather than a tick, and nudged itself into place with a marginTop hack.
+ * Size, radius and alignment live in one place so the Today and Upcoming
+ * panels can't drift apart again.
+ */
+function CheckToggle({ checked, onToggle, label }) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-label={label}
+      title={checked ? "Mark as not done" : "Mark as done"}
+      onClick={onToggle}
+      className="sv-focus"
+      style={{
+        width: 20,
+        height: 20,
+        // mobile.css forces `.sv-root button { min-height: 40px }` for touch
+        // targets; without this the box renders as a tall narrow rectangle.
+        minHeight: 20,
+        borderRadius: 6,
+        flexShrink: 0,
+        cursor: "pointer",
+        padding: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        border: `1.5px solid ${checked ? "var(--mint)" : "var(--border)"}`,
+        background: checked ? "var(--mint)" : "transparent",
+        color: "#0B0F14",
+        boxShadow: checked ? "0 2px 6px rgba(0,0,0,.4)" : "none",
+        transition: "background-color .15s ease, border-color .15s ease, box-shadow .15s ease"
+      }}
+    >
+      {checked && <Check size={13} strokeWidth={3.5} />}
+    </button>
+  );
+}
+
 function EventRow({ event, onClick, onDelete, onToggleComplete }) {
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
       <div style={{ width: 4, alignSelf: "stretch", borderRadius: 3, background: EVENT_CATEGORY_COLORS[event.category] || "var(--primary)", flexShrink: 0, opacity: event.completed ? 0.4 : 1 }} />
-      <button
-        onClick={onToggleComplete}
-        title={event.completed ? "Mark as not done" : "Mark as done"}
-        className="sv-focus"
-        style={{
-          width: 18, height: 18, borderRadius: 5, flexShrink: 0, marginTop: 2, cursor: "pointer",
-          border: `1.5px solid ${event.completed ? "var(--mint)" : "var(--text-faint)"}`,
-          background: event.completed ? "var(--mint)" : "transparent",
-          display: "flex", alignItems: "center", justifyContent: "center", padding: 0
-        }}
-      >
-        {event.completed && <CheckCircle2 size={12} color="#0B0F14" strokeWidth={3} />}
-      </button>
+      <CheckToggle
+        checked={event.completed}
+        onToggle={onToggleComplete}
+        label={`Mark "${event.title}" as ${event.completed ? "not done" : "done"}`}
+      />
       <button onClick={onClick} className="sv-focus" style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: event.completed ? "var(--text-faint)" : "var(--text)", textDecoration: event.completed ? "line-through" : "none" }}>{event.title}</span>
@@ -4006,8 +4220,8 @@ function ContactsView({ contacts, openModal, deleteContact, toggleFavorite, onIm
 
   return (
     <div>
-      <TopBar title="Contacts" subtitle={`${contacts.length} contact${contacts.length === 1 ? "" : "s"}`}
-        right={<div style={{ display: "flex", gap: 8 }}>
+      <TopBar title="Contacts" subtitle={`${contacts.length} contact${contacts.length === 1 ? "" : "s"}`} onOpenSearch={() => openModal("search")}
+        right={<>
           <Button size="sm" variant="subtle" onClick={onExport}>Export</Button>
           <Button size="sm" variant="subtle" onClick={() => document.getElementById("sv-contact-import").click()}>Import</Button>
           <input id="sv-contact-import" type="file" accept="application/json,.json" style={{ display: "none" }}
@@ -4015,7 +4229,7 @@ function ContactsView({ contacts, openModal, deleteContact, toggleFavorite, onIm
           <Button variant="subtle" onClick={() => { setSelectMode((v) => !v); if (selectMode) setSelected(new Set()); }}>{selectMode ? "Cancel select" : "Select"}</Button>
           {selectMode && selected.size > 0 && <Button variant="danger" onClick={() => { selected.forEach((id) => deleteContact(id)); setSelected(new Set()); setSelectMode(false); }}>Delete selected ({selected.size})</Button>}
           <Button icon={Plus} onClick={() => openModal("contact-add")}>Add contact</Button>
-        </div>} />
+        </>} />
       <div style={{ padding: "0 28px 28px" }}>
         <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
           <div style={{ position: "relative", flex: "1 1 220px" }}>
@@ -4476,7 +4690,7 @@ function trashEntrySubtitle(entry) {
   }
 }
 
-function TrashView({ trash, onRestore, onDeleteForever, onEmptyTrash }) {
+function TrashView({ trash, onRestore, onDeleteForever, onEmptyTrash, openModal }) {
   const [typeFilter, setTypeFilter] = useState("All");
   const [confirmDeleteForever, setConfirmDeleteForever] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
@@ -4491,7 +4705,7 @@ function TrashView({ trash, onRestore, onDeleteForever, onEmptyTrash }) {
 
   return (
     <div>
-      <TopBar title="Trash" subtitle={`${trash.length} item${trash.length === 1 ? "" : "s"} — deleted items are kept for ${TRASH_RETENTION_DAYS} days before being permanently removed`}
+      <TopBar title="Trash" subtitle={`${trash.length} item${trash.length === 1 ? "" : "s"} — deleted items are kept for ${TRASH_RETENTION_DAYS} days before being permanently removed`} onOpenSearch={() => openModal("search")}
         right={trash.length > 0 && <>{selectMode && selected.size > 0 && <Button variant="danger" icon={Trash2} onClick={() => { selected.forEach((id) => onDeleteForever(id)); setSelected(new Set()); setSelectMode(false); }}>Delete selected ({selected.size})</Button>}<Button variant="subtle" onClick={() => { setSelectMode((v) => !v); if (selectMode) setSelected(new Set()); }}>{selectMode ? "Cancel select" : "Select"}</Button><Button variant="danger" icon={Trash2} onClick={() => setConfirmEmpty(true)}>Empty trash</Button></>} />
       <div style={{ padding: "0 28px 28px" }}>
         {trash.length > 0 && (
@@ -4556,7 +4770,7 @@ function TrashView({ trash, onRestore, onDeleteForever, onEmptyTrash }) {
 /* Security Center                                                       */
 /* ---------------------------------------------------------------------- */
 
-function SecurityCenter({ passwords, activity, sessions, onEndSession, onRestoreVersion, serverStatus, lastRestoreUndo, onUndoRestore }) {
+function SecurityCenter({ passwords, activity, sessions, onEndSession, onRestoreVersion, serverStatus, lastRestoreUndo, onUndoRestore, openModal }) {
   const [versions, setVersions] = useState([]);
   const [versionsLoading, setVersionsLoading] = useState(true);
   const [confirmRestore, setConfirmRestore] = useState(null);
@@ -4607,7 +4821,7 @@ function SecurityCenter({ passwords, activity, sessions, onEndSession, onRestore
 
   return (
     <div>
-      <TopBar title="Security Center" subtitle="Your vault's health, at a glance" />
+      <TopBar title="Security Center" subtitle="Your vault's health, at a glance" onOpenSearch={() => openModal("search")} />
       <div style={{ padding: "0 28px 28px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 16, marginBottom: 18 }}>
           <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
@@ -4661,7 +4875,7 @@ function SecurityCenter({ passwords, activity, sessions, onEndSession, onRestore
             get a warning with the option to review what changed, restore an earlier version, or trust the new file.
           </div>
           <div className="sv-display" style={{ fontWeight: 600, fontSize: 13, marginBottom: 10 }}>Version history</div>
-          {serverStatus !== "connected" ? (
+          {!IS_ANDROID_APP && serverStatus !== "connected" ? (
             <div style={{ fontSize: 12, color: "var(--text-faint)" }}>Connect to the local server to see saved versions.</div>
           ) : versionsLoading ? (
             <div style={{ fontSize: 12, color: "var(--text-faint)" }}>Loading…</div>
@@ -4723,12 +4937,14 @@ function SecurityCenter({ passwords, activity, sessions, onEndSession, onRestore
               <strong style={{ color: "var(--text)" }}>How this vault is actually encrypted: </strong>
               a random 256-bit vault key encrypts everything (AES-256-GCM). That key is itself wrapped by a key
               derived from your master password via Argon2id — and, if enabled, by a second key derived from your PIN
-              the same way, or by Windows DPAPI gated behind an actual Windows Hello prompt if biometric unlock is on.
+              the same way, or {IS_ANDROID_APP
+                ? "by an Android Keystore key that is only released after a biometric prompt"
+                : "by Windows DPAPI gated behind an actual Windows Hello prompt"} if biometric unlock is on.
               Only ciphertext, salts, and Argon2id parameters ever touch disk; the file at{" "}
-              <span className="sv-mono">D:\Local Data\securevault-data.json</span> reveals nothing without your
-              master password, PIN, or Windows Hello. This part is real, not simulated. What's still simplified for
-              a local prototype: no TLS (traffic never leaves localhost), no server-side account system, 2FA is still
-              a UI-only toggle, and biometric unlock currently only works on Windows.
+              <span className="sv-mono">{IS_ANDROID_APP ? "the vault file on this device" : "D:\Local Data\securevault-data.json"}</span> reveals nothing without your
+              master password, PIN, or {biometricLabel()}. This part is real, not simulated. What's still simplified for
+              a local prototype: no TLS (traffic never leaves localhost), no server-side account system, and 2FA is
+              still a UI-only toggle.
             </div>
           </div>
         </Card>
@@ -4809,12 +5025,12 @@ function ProfilePictureRow({ avatar, name, onUpdateAccount, toast }) {
 
   return (
     <SettingRow label="Profile picture" sub="Stored encrypted with the rest of your vault — not uploaded anywhere">
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <Avatar src={avatar} name={name} size={40} fontSize={14} />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0 }}>
+        <Avatar src={avatar} name={name} size={36} fontSize={13} />
         <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFile} style={{ display: "none" }} />
-        <Button size="sm" variant="subtle" onClick={() => fileInputRef.current?.click()} disabled={busy}>{busy ? "Processing…" : "Upload"}</Button>
+        <Button size="sm" variant="subtle" onClick={() => fileInputRef.current?.click()} disabled={busy} style={{ flexShrink: 0 }}>{busy ? "Processing…" : "Upload"}</Button>
         {avatar && (
-          <Button size="sm" variant="ghost" onClick={() => { onUpdateAccount({ avatar: null }); toast("Profile picture removed.", "success"); }}>Remove</Button>
+          <Button size="sm" variant="ghost" onClick={() => { onUpdateAccount({ avatar: null }); toast("Profile picture removed.", "success"); }} style={{ flexShrink: 0 }}>Remove</Button>
         )}
       </div>
     </SettingRow>
@@ -5069,7 +5285,7 @@ function ImportVaultModal({ onCancel, onImport }) {
   );
 }
 
-function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessions, onEndSession, toast, onEraseLocalData, auth, onUpdateAccount, serverStatus, dataFilePath, onChangeMasterPassword, onSetupPin, onChangePin, onDisablePin, pinEnabled, onSetupBiometric, onDisableBiometric, biometricEnabled, biometricAvailable, biometricReason, onExportVault, onImportVault, onBackupNow }) {
+function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessions, onEndSession, toast, onEraseLocalData, auth, onUpdateAccount, serverStatus, dataFilePath, onChangeMasterPassword, onSetupPin, onChangePin, onDisablePin, pinEnabled, onSetupBiometric, onDisableBiometric, biometricEnabled, biometricAvailable, biometricReason, onExportVault, onImportVault, onBackupNow, openModal }) {
   const [confirmDeleteAcct, setConfirmDeleteAcct] = useState(false);
   const [confirmErase, setConfirmErase] = useState(false);
   const [confirmDisablePin, setConfirmDisablePin] = useState(false);
@@ -5088,9 +5304,9 @@ function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessi
 
   return (
     <div>
-      <TopBar title="Settings" subtitle="Manage your account, security, and preferences" />
+      <TopBar title="Settings" subtitle="Manage your account, security, and preferences" onOpenSearch={() => openModal("search")} />
       <div style={{ padding: "0 28px 28px", maxWidth: 720 }}>
-        {serverStatus !== "connected" && (
+        {!IS_ANDROID_APP && serverStatus !== "connected" && (
           <Card style={{ marginBottom: 16, borderColor: "var(--coral)" }}>
             <div style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 12.5, color: "var(--coral)" }}>
               <ShieldAlert size={16} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -5133,10 +5349,10 @@ function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessi
             </SettingRow>
           )}
           <SettingRow
-            label="Biometric authentication (Windows Hello)"
+            label={IS_ANDROID_APP ? "Biometric authentication" : "Biometric authentication (Windows Hello)"}
             sub={
-              biometricEnabled ? "Unlock with fingerprint, face, or Windows Hello PIN"
-                : biometricAvailable ? "Not set up — enable to unlock with Windows Hello"
+              biometricEnabled ? `Unlock with ${biometricLabel()}`
+                : biometricAvailable ? `Not set up — enable to unlock with ${biometricLabel()}`
                 : biometricReason || "Not available on this device"
             }
           >
@@ -5144,12 +5360,12 @@ function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessi
               checked={biometricEnabled}
               onChange={async (v) => {
                 if (v) {
-                  if (!biometricAvailable) { toast(biometricReason || "Windows Hello isn't available on this device.", "danger"); return; }
+                  if (!biometricAvailable) { toast(biometricReason || `${biometricLabel()} isn't available on this device.`, "danger"); return; }
                   setBiometricBusy(true);
                   const result = await onSetupBiometric();
                   setBiometricBusy(false);
-                  if (result.ok) toast("Windows Hello unlock enabled.", "success");
-                  else toast(result.error || "Couldn't set up Windows Hello.", "danger");
+                  if (result.ok) toast(`${biometricLabel()} unlock enabled.`, "success");
+                  else toast(result.error || `Couldn't set up ${biometricLabel()}.`, "danger");
                 } else {
                   setConfirmDisableBiometric(true);
                 }
@@ -5158,7 +5374,7 @@ function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessi
             />
           </SettingRow>
           {biometricBusy && (
-            <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: -8 }}>Follow the Windows Hello prompt…</div>
+            <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: -8 }}>Follow the {biometricLabel()} prompt…</div>
           )}
           <SettingRow label="Auto-lock after inactivity" sub="Vault locks automatically when idle">
             <Select value={settings.autoLock} onChange={(e) => setSettings((s) => ({ ...s, autoLock: e.target.value }))} style={{ width: 150 }}>
@@ -5270,9 +5486,9 @@ function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessi
           onConfirm={() => { setConfirmDisablePin(false); onDisablePin(); toast("PIN unlock disabled.", "success"); }} />
       )}
       {confirmDisableBiometric && (
-        <ConfirmDialog title="Disable Windows Hello unlock" message="You'll no longer be able to unlock the vault with your fingerprint, face, or Windows Hello PIN."
+        <ConfirmDialog title={`Disable ${biometricLabel()} unlock`} message={`You'll no longer be able to unlock the vault with ${biometricLabel()}.`}
           confirmLabel="Disable" danger onCancel={() => setConfirmDisableBiometric(false)}
-          onConfirm={async () => { setConfirmDisableBiometric(false); await onDisableBiometric(); toast("Windows Hello unlock disabled.", "success"); }} />
+          onConfirm={async () => { setConfirmDisableBiometric(false); await onDisableBiometric(); toast(`${biometricLabel()} unlock disabled.`, "success"); }} />
       )}
       {showChangePw && (
         <ChangePasswordModal
@@ -5436,6 +5652,9 @@ function BootScreen({ serverStatus }) {
 export default function App() {
   // "checking" -> "connected" (server + D:\Local Data reachable) -> "offline" (server not running)
   const [serverStatus, setServerStatus] = useState("checking");
+  // On Android there is no local server to talk to, but the vault still
+  // persists to a file on the device — so "offline" must not disable saving.
+  const persistEnabled = IS_ANDROID_APP || serverStatus === "connected";
   const [dataFilePath, setDataFilePath] = useState("");
   const [booted, setBooted] = useState(false);
 
@@ -5495,9 +5714,20 @@ export default function App() {
         const res = await window.secureVaultNative.biometricCheck();
         setBiometricAvailable(!!res.supported);
         setBiometricReason(res.reason || "");
-      } else {
-        setBiometricReason("Biometric unlock only works in the SecureVault desktop app.");
+        return;
       }
+      const bio = androidBiometric();
+      if (bio) {
+        try {
+          const res = await bio.check();
+          setBiometricAvailable(!!res.supported);
+          setBiometricReason(res.reason || "");
+          return;
+        } catch { /* fall through to the unavailable message */ }
+      }
+      setBiometricReason(IS_ANDROID_APP
+        ? "Biometric unlock isn't available on this device."
+        : "Biometric unlock only works in the SecureVault desktop app.");
     })();
   }, []);
 
@@ -5512,10 +5742,21 @@ export default function App() {
     setActivity((a) => [{ id: uid(), type, detail, ts: new Date().toISOString().slice(0, 10) }, ...a]);
   }, []);
 
-  // ---- Boot: ping the local server, then load the encrypted envelope -----
+  // ---- Boot: load the encrypted envelope ---------------------------------
+  // Desktop reads it through the local server; Android reads the vault file
+  // straight off the device, since there is no server running on a phone.
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (isAndroidRuntime()) {
+        setDataFilePath(ANDROID_DATA_PATH);
+        const { envelope: env } = await loadEnvelope();
+        if (cancelled) return;
+        setEnvelope(env); // null => VaultSetupScreen will be shown
+        setServerStatus("offline");
+        setBooted(true);
+        return;
+      }
       const ping = await pingLocalServer();
       if (cancelled) return;
       if (!ping) {
@@ -5579,7 +5820,7 @@ export default function App() {
     setEnvelope(newEnvelope);
     loadDecryptedIntoState(initialData);
     setLocked(false);
-    if (serverStatus === "connected") await saveEnvelope(newEnvelope);
+    if (persistEnabled) await saveEnvelope(newEnvelope);
     toast("Vault created and encrypted with your master password.", "success");
   };
 
@@ -5639,7 +5880,7 @@ export default function App() {
     // don't want to silently overwrite a tampered/rolled-back file with a
     // re-encryption of whatever's currently in memory before the user has
     // chosen how to handle it.
-    if (!booted || locked || serverStatus !== "connected" || !vaultKeyRef.current || !envelope || integrityIssue) return;
+    if (!booted || locked || !persistEnabled || !vaultKeyRef.current || !envelope || integrityIssue) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       const dataObj = { passwords, notes, transactions, budgets, goals, visionItems, generalSavings, savingsAdjustment, events, contacts, trash, activity, sessions, settings, auth, theme };
@@ -5649,7 +5890,9 @@ export default function App() {
       const ok = await saveEnvelope(newEnvelope);
       if (!ok && !warnedOffline.current) {
         warnedOffline.current = true;
-        toast("Couldn't reach the local server — changes aren't being saved to D:\\Local Data right now.", "danger");
+        toast(IS_ANDROID_APP
+          ? `Couldn't write the vault file on this device — changes aren't being saved.${lastAndroidWriteError ? ` (${lastAndroidWriteError})` : ""}`
+          : "Couldn't reach the local server — changes aren't being saved to D:\\Local Data right now.", "danger");
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, 500);
@@ -5657,7 +5900,7 @@ export default function App() {
     // envelope intentionally excluded — it's updated as a *result* of this
     // effect, not a trigger for it, to avoid a save loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [passwords, notes, transactions, budgets, goals, visionItems, generalSavings, savingsAdjustment, events, contacts, trash, activity, sessions, settings, auth, theme, booted, locked, serverStatus, integrityIssue]);
+  }, [passwords, notes, transactions, budgets, goals, visionItems, generalSavings, savingsAdjustment, events, contacts, trash, activity, sessions, settings, auth, theme, booted, locked, serverStatus, persistEnabled, integrityIssue]);
 
   // ---- Reminders sync: keeps the plaintext reminders index current so ----
   // alarms can fire while locked or minimized to the tray. Guarded to only
@@ -5688,6 +5931,9 @@ export default function App() {
 
   const openModal = (type, data) => setModal({ type, data });
   const closeModal = () => setModal(null);
+
+  /* Any <TopBar> rendered without an explicit onOpenSearch still gets a working button. */
+  useEffect(() => { registerTopBarSearchFallback(() => openModal("search")); });
 
   /* keyboard shortcuts */
   useEffect(() => {
@@ -6024,7 +6270,7 @@ export default function App() {
 
 
   const eraseLocalData = async () => {
-    if (serverStatus === "connected") await deleteEnvelope();
+    if (persistEnabled) await deleteEnvelope();
     vaultKeyRef.current = null;
     setEnvelope(null);
     setPasswords([]); setNotes([]); setTransactions([]); setBudgets([]); setGoals([]); setGeneralSavings({ balance: 0, history: [] }); setSavingsAdjustment(0); setEvents([]); setContacts([]); setTrash([]); setActivity([]); setSessions([]);
@@ -6047,7 +6293,7 @@ export default function App() {
     const newMeta = await rewrapPassword(vaultKeyRef.current, newPassword);
     const newEnvelope = { ...envelope, password: newMeta, updatedAt: new Date().toISOString() };
     setEnvelope(newEnvelope);
-    if (serverStatus === "connected") await saveEnvelope(newEnvelope);
+    if (persistEnabled) await saveEnvelope(newEnvelope);
     logActivity("security_change", "Master password changed");
     return { ok: true };
   };
@@ -6058,7 +6304,7 @@ export default function App() {
     const newEnvelope = { ...envelope, pin: newMeta, updatedAt: new Date().toISOString() };
     setEnvelope(newEnvelope);
     setSettings((s) => ({ ...s, pin: true }));
-    if (serverStatus === "connected") await saveEnvelope(newEnvelope);
+    if (persistEnabled) await saveEnvelope(newEnvelope);
     logActivity("security_change", "PIN unlock enabled");
     return { ok: true };
   };
@@ -6073,7 +6319,7 @@ export default function App() {
     const newMeta = await rewrapPin(vaultKeyRef.current, newPin);
     const newEnvelope = { ...envelope, pin: newMeta, updatedAt: new Date().toISOString() };
     setEnvelope(newEnvelope);
-    if (serverStatus === "connected") await saveEnvelope(newEnvelope);
+    if (persistEnabled) await saveEnvelope(newEnvelope);
     logActivity("security_change", "PIN changed");
     return { ok: true };
   };
@@ -6082,29 +6328,47 @@ export default function App() {
     const newEnvelope = { ...envelope, pin: null, updatedAt: new Date().toISOString() };
     setEnvelope(newEnvelope);
     setSettings((s) => ({ ...s, pin: false }));
-    if (serverStatus === "connected") await saveEnvelope(newEnvelope);
+    if (persistEnabled) await saveEnvelope(newEnvelope);
     logActivity("security_change", "PIN unlock disabled");
   };
 
   // ---- Biometric (Windows Hello) setup/disable/unlock --------------------
   const setupBiometric = async () => {
-    if (!window.secureVaultNative) return { ok: false, error: "Biometric unlock only works in the SecureVault desktop app." };
-    const res = await window.secureVaultNative.biometricProtect(bytesToB64(vaultKeyRef.current));
-    if (!res.ok) return { ok: false, error: res.error };
-    const newEnvelope = { ...envelope, biometric: { protectedKey: res.protected }, updatedAt: new Date().toISOString() };
+    const keyB64 = bytesToB64(vaultKeyRef.current);
+    if (IS_ANDROID_APP) {
+      const bio = androidBiometric();
+      if (!bio) return { ok: false, error: "Biometric unlock isn't available on this device." };
+      try {
+        const res = await bio.protect({ key: keyB64 });
+        if (!res || res.ok === false) return { ok: false, error: "The device refused to store the protected key." };
+      } catch (e) {
+        return { ok: false, error: (e && e.message) || "Couldn't set up biometric unlock." };
+      }
+    } else {
+      if (!window.secureVaultNative) return { ok: false, error: "Biometric unlock only works in the SecureVault desktop app." };
+      const res = await window.secureVaultNative.biometricProtect(keyB64);
+      if (!res.ok) return { ok: false, error: res.error };
+    }
+    // On Android the wrapped blob lives in the app's private Keystore-backed
+    // storage, so the envelope only carries a marker saying which path to use.
+    const newEnvelope = { ...envelope, biometric: { protectedKey: IS_ANDROID_APP ? "android-keystore" : "windows-hello" }, updatedAt: new Date().toISOString() };
     setEnvelope(newEnvelope);
     setSettings((s) => ({ ...s, biometric: true }));
-    if (serverStatus === "connected") await saveEnvelope(newEnvelope);
-    logActivity("security_change", "Windows Hello unlock enabled");
+    if (persistEnabled) await saveEnvelope(newEnvelope);
+    logActivity("security_change", IS_ANDROID_APP ? "Biometric unlock enabled" : "Windows Hello unlock enabled");
     return { ok: true };
   };
 
   const disableBiometric = async () => {
+    if (IS_ANDROID_APP) {
+      const bio = androidBiometric();
+      if (bio) { try { await bio.clear(); } catch { /* nothing stored to clear */ } }
+    }
     const newEnvelope = { ...envelope, biometric: null, updatedAt: new Date().toISOString() };
     setEnvelope(newEnvelope);
     setSettings((s) => ({ ...s, biometric: false }));
-    if (serverStatus === "connected") await saveEnvelope(newEnvelope);
-    logActivity("security_change", "Windows Hello unlock disabled");
+    if (persistEnabled) await saveEnvelope(newEnvelope);
+    logActivity("security_change", IS_ANDROID_APP ? "Biometric unlock disabled" : "Windows Hello unlock disabled");
   };
 
   // ---- Export: re-verify master password, then download the on-disk ------
@@ -6129,7 +6393,7 @@ export default function App() {
       vaultKeyRef.current = vaultKeyBytes;
       setEnvelope(importedEnvelope);
       loadDecryptedIntoState(data);
-      if (serverStatus === "connected") await saveEnvelope(importedEnvelope);
+      if (persistEnabled) await saveEnvelope(importedEnvelope);
       logActivity("security_change", "Imported vault from backup file");
       return { ok: true };
     } catch {
@@ -6222,20 +6486,35 @@ export default function App() {
   };
 
   const handleUnlockWithBiometric = async () => {
-    if (!window.secureVaultNative || !envelope?.biometric) {
-      return { ok: false, error: "Windows Hello unlock isn't set up." };
+    if (!envelope?.biometric) {
+      return { ok: false, error: "Biometric unlock isn't set up." };
     }
-    const res = await window.secureVaultNative.biometricUnlock(envelope.biometric.protectedKey);
-    if (!res.ok) return { ok: false, error: res.error };
+    let plainB64;
+    if (IS_ANDROID_APP) {
+      const bio = androidBiometric();
+      if (!bio) return { ok: false, error: "Biometric unlock isn't available on this device." };
+      try {
+        const res = await bio.unlock();
+        if (!res || !res.ok) return { ok: false, error: "Biometric unlock was cancelled." };
+        plainB64 = res.plain;
+      } catch (e) {
+        return { ok: false, error: (e && e.message) || "Biometric unlock was cancelled." };
+      }
+    } else {
+      if (!window.secureVaultNative) return { ok: false, error: "Biometric unlock only works in the SecureVault desktop app." };
+      const res = await window.secureVaultNative.biometricUnlock(envelope.biometric.protectedKey);
+      if (!res.ok) return { ok: false, error: res.error };
+      plainB64 = res.plain;
+    }
     try {
-      const vaultKeyBytes = b64ToBytes(res.plain);
+      const vaultKeyBytes = b64ToBytes(plainB64);
       const K = await importAesKey(vaultKeyBytes);
       const data = await aesDecryptJSON(K, envelope.data.iv, envelope.data.ciphertext);
       vaultKeyRef.current = vaultKeyBytes;
       loadDecryptedIntoState(data);
       setLocked(false);
-      logActivity("vault_unlocked", "Vault unlocked with Windows Hello");
-      toast("Vault unlocked with Windows Hello.", "success");
+      logActivity("vault_unlocked", IS_ANDROID_APP ? "Vault unlocked with biometrics" : "Vault unlocked with Windows Hello");
+      toast(IS_ANDROID_APP ? "Vault unlocked with biometrics." : "Vault unlocked with Windows Hello.", "success");
       return { ok: true };
     } catch {
       return { ok: false, error: "Couldn't unlock the vault with the recovered key." };
@@ -6313,13 +6592,13 @@ export default function App() {
           <ContactsView contacts={contacts} openModal={openModal} deleteContact={deleteContact} toggleFavorite={toggleContactFavorite} onImport={importContacts} onExport={exportContacts} />
         )}
         {view === "trash" && (
-          <TrashView trash={trash} onRestore={restoreFromTrash} onDeleteForever={deleteForever} onEmptyTrash={emptyTrash} />
+          <TrashView trash={trash} onRestore={restoreFromTrash} onDeleteForever={deleteForever} onEmptyTrash={emptyTrash} openModal={openModal} />
         )}
         {view === "security" && (
-          <SecurityCenter passwords={passwords} activity={activity} sessions={sessions} onEndSession={endSession} onRestoreVersion={restoreVersionByFile} serverStatus={serverStatus} lastRestoreUndo={lastRestoreUndo} onUndoRestore={undoLastRestore} />
+          <SecurityCenter passwords={passwords} activity={activity} sessions={sessions} onEndSession={endSession} onRestoreVersion={restoreVersionByFile} serverStatus={serverStatus} lastRestoreUndo={lastRestoreUndo} onUndoRestore={undoLastRestore} openModal={openModal} />
         )}
         {view === "settings" && (
-          <SettingsView settings={settings} setSettings={setSettings} theme={theme} toggleTheme={() => setTheme((t) => t === "dark" ? "light" : "dark")} onLock={handleLock} sessions={sessions} onEndSession={endSession} toast={toast} onEraseLocalData={eraseLocalData} auth={auth} onUpdateAccount={updateAccount} serverStatus={serverStatus} dataFilePath={dataFilePath} onChangeMasterPassword={changeMasterPassword} onSetupPin={setupPin} onChangePin={changePin} onDisablePin={disablePin} pinEnabled={!!envelope?.pin} onSetupBiometric={setupBiometric} onDisableBiometric={disableBiometric} biometricEnabled={!!envelope?.biometric} biometricAvailable={biometricAvailable} biometricReason={biometricReason} onExportVault={exportVault} onImportVault={importVault} onBackupNow={backupNow} />
+          <SettingsView settings={settings} setSettings={setSettings} theme={theme} toggleTheme={() => setTheme((t) => t === "dark" ? "light" : "dark")} onLock={handleLock} sessions={sessions} onEndSession={endSession} toast={toast} onEraseLocalData={eraseLocalData} auth={auth} onUpdateAccount={updateAccount} serverStatus={serverStatus} dataFilePath={dataFilePath} onChangeMasterPassword={changeMasterPassword} onSetupPin={setupPin} onChangePin={changePin} onDisablePin={disablePin} pinEnabled={!!envelope?.pin} onSetupBiometric={setupBiometric} onDisableBiometric={disableBiometric} biometricEnabled={!!envelope?.biometric} biometricAvailable={biometricAvailable} biometricReason={biometricReason} onExportVault={exportVault} onImportVault={importVault} onBackupNow={backupNow} openModal={openModal} />
         )}
       </div>
 

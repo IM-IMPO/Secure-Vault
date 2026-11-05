@@ -48,6 +48,7 @@ function getPreloadPath() {
 }
 
 function getIndexPath() {
+  // The React Vite app dist/ is copied to the project root for Electron.
   return path.join(app.getAppPath(), "dist", "index.html");
 }
 
@@ -97,6 +98,41 @@ function startLocalServer() {
   });
 }
 
+// Start a simple HTTP server to serve the React app for Electron
+function startAppServer() {
+  const http = require("http");
+  const fs = require("fs");
+  const path = require("path");
+
+  const distPath = path.join(app.getAppPath(), "dist");
+  const port = 5173;
+
+  const server = http.createServer((req, res) => {
+    let filePath = path.join(distPath, req.url === "/" ? "index.html" : req.url);
+    const extname = path.extname(filePath);
+    let contentType = "text/html";
+
+    if (path.extname(filePath) === ".css") contentType = "text/css";
+    else if (path.extname(filePath) === ".js") contentType = "application/javascript";
+
+    fs.readFile(filePath, (error, content) => {
+      if (error) {
+        res.writeHead(404);
+        res.end("File not found");
+      } else {
+        res.writeHead(200, { "Content-Type": contentType });
+        res.end(content, "utf-8");
+      }
+    });
+  });
+
+  server.listen(port, "127.0.0.1", () => {
+    console.log(`[SecureVault] App server running on http://localhost:${port}`);
+  });
+
+  return server;
+}
+
 function stopLocalServer() {
   if (!serverProcess) return;
 
@@ -134,6 +170,9 @@ function createWindow() {
 
   const indexPath = getIndexPath();
 
+  // Start the app server to serve the React app
+  startAppServer();
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -142,14 +181,17 @@ function createWindow() {
     backgroundColor: "#0B0F14",
     show: false,
     webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
+      contextIsolation: false,
+      nodeIntegration: true,
+      enableRemoteModule: true,
       preload: getPreloadPath()
     },
     title: "SecureVault"
   });
 
-  mainWindow.loadFile(indexPath).catch((error) => {
+  // Load via HTTP server instead of file://
+  mainWindow.loadURL("http://localhost:5173").catch((error) => {
+    console.error("Failed to load SecureVault:", error);
     console.error("Failed to load SecureVault:", error);
 
     if (!mainWindow || mainWindow.isDestroyed()) return;
