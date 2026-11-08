@@ -9,3 +9,5 @@ release/
 securevault-data.json
 *securevault-data.json*
 Local Data/
+android/app/google-services.json
+securevault/temp_check.py
