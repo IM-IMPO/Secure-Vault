@@ -189,6 +189,25 @@ function createWindow() {
     title: "SecureVault"
   });
 
+  // Google refuses to show its sign-in page inside an embedded browser that
+  // announces itself as "Electron". Present a normal Chrome user agent, and allow
+  // only the Google / Firebase sign-in popup to open (everything else is denied).
+  const chromeUA = mainWindow.webContents.getUserAgent().replace(/\s(?:Electron|securevault)\/\S+/gi, "");
+  mainWindow.webContents.session.setUserAgent(chromeUA);
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    let host = "";
+    try { host = new URL(url).hostname; } catch { /* ignore */ }
+    const isGoogleAuth = host === "accounts.google.com" || host.endsWith(".google.com") || host.endsWith(".firebaseapp.com");
+    if (!isGoogleAuth) return { action: "deny" };
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        width: 520, height: 720, autoHideMenuBar: true,
+        webPreferences: { nodeIntegration: false, contextIsolation: true },
+      },
+    };
+  });
+
   // Load via HTTP server instead of file://
   mainWindow.loadURL("http://localhost:5173").catch((error) => {
     console.error("Failed to load SecureVault:", error);

@@ -1,5 +1,13 @@
 {
   "appId": "com.imimpo.securevault",
   "appName": "SecureVault",
-  "webDir": "dist"
+  "webDir": "dist",
+  "plugins": {
+    "FirebaseAuthentication": {
+      "skipNativeAuth": true,
+      "providers": [
+        "google.com"
+      ]
+    }
+  }
 }

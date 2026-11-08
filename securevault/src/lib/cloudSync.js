@@ -153,7 +153,7 @@ export const fullSync = async (localEnvelope, userId, localSyncToken = null, mas
     try {
       const blob = await downloadVaultFromCloud(userId);
       if (blob) {
-        const cloudData = JSON.parse(await blob.text());
+        cloudData = JSON.parse(await blob.text());
         if (!cloudData.password || !cloudData.data || !cloudData.updatedAt) {
           throw new Error("Corrupt vault on cloud");
         }

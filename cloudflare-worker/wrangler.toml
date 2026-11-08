@@ -1,0 +1,13 @@
+name = "securevault-sync"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# Your Firebase project id — tokens issued for any other project are rejected.
+[vars]
+FIREBASE_PROJECT_ID = "vault-b3bfb"
+
+# R2 bucket that holds the encrypted vaults (create it first:
+#   npx wrangler r2 bucket create securevault-vaults)
+[[r2_buckets]]
+binding = "VAULT"
+bucket_name = "securevault-vaults"

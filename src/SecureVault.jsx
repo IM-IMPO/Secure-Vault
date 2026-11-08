@@ -22,6 +22,11 @@ import {
 // is never populated) so the native plugin is registered on Android.
 import { Filesystem, Directory, Encoding } from "@capacitor/filesystem";
 import { registerPlugin } from "@capacitor/core";
+import {
+  watchCloudUser, cloudSignIn, cloudSignOut, friendlyAuthError,
+  getCloudMeta, downloadCloudVault, uploadCloudVault, deleteCloudVault,
+  getLastCloudSync, setLastCloudSync, getCloudBase, setCloudBase, getLocalOnlyChoice, setLocalOnlyChoice, newVaultId,
+} from "./cloud.js";
 
 /* ---------------------------------------------------------------------- */
 /* Platform detection                                                      */
@@ -249,6 +254,7 @@ async function createVaultEnvelope(masterPassword, initialData) {
   const dataEnc = await aesEncryptJSON(K, initialData);
   const envelope = {
     version: 2,
+    vaultId: newVaultId(), // identifies this vault across devices so cloud sync can tell "same vault" from "different vault"
     kdf: "argon2id",
     cipher: "AES-256-GCM",
     password: { salt: bytesToB64(salt), iv: wrapped.iv, wrappedKey: wrapped.ciphertext, params: PASSWORD_ARGON2_PARAMS },
@@ -467,6 +473,15 @@ async function deleteEnvelope() {
   } catch {
     return false;
   }
+}
+
+/* Older vaults were created before vaultId existed. Give them one (once) and
+   persist it, so the same id is uploaded to / compared with the cloud copy. */
+async function ensureVaultId(env) {
+  if (!env || env.vaultId) return env;
+  const withId = { ...env, vaultId: newVaultId() };
+  await saveEnvelope(withId);
+  return withId;
 }
 
 async function backupNow() {
@@ -1305,8 +1320,160 @@ function LockScreen({ onUnlockWithPassword, onUnlockWithPin, onUnlockWithBiometr
   );
 }
 
+/* Cloud gate — shown whenever there is NO vault on this device yet.
+   Sequence:  Google sign-in  ->  (cloud vault exists?)
+                 yes -> ask for the master password -> decrypt -> restore -> unlocked
+                 no  -> create a new vault (it is then uploaded to this account)
+   A wrong master password just shows an error and stays on the prompt. */
+function CloudGate({ user, authReady, localOnly, onSignIn, onSignOut, onRestore, onCreate, onChooseLocalOnly, onUseCloud, serverStatus, dataFilePath }) {
+  const [phase, setPhase] = useState("loading"); // loading | signin | checking | password | new | error
+  const [cloudEnv, setCloudEnv] = useState(null);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const uid = user ? user.uid : null;
+
+  useEffect(() => {
+    if (localOnly) return undefined;
+    if (!authReady) { setPhase("loading"); return undefined; }
+    if (!uid) { setPhase("signin"); setError(""); return undefined; }
+    let cancelled = false;
+    setPhase("checking");
+    setError("");
+    (async () => {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        if (!cancelled) {
+          setError("You're offline, so the cloud vault can't be checked. Connect to the internet and retry, or create a vault on this device now — it uploads automatically once you're online.");
+          setPhase("error");
+        }
+        return;
+      }
+      try {
+        const env = await downloadCloudVault();
+        if (cancelled) return;
+        if (env) { setCloudEnv(env); setPhase("password"); } else setPhase("new");
+      } catch (e) {
+        if (!cancelled) { setError(friendlyAuthError(e)); setPhase("error"); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authReady, uid, localOnly, attempt]);
+
+  // If we were stuck on "offline", retry by ourselves when the connection returns.
+  useEffect(() => {
+    const retry = () => { if (phaseRef.current === "error") setAttempt((n) => n + 1); };
+    window.addEventListener("online", retry);
+    return () => window.removeEventListener("online", retry);
+  }, []);
+
+  const shell = (title, subtitle, body) => (
+    <div className="sv-root dark" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden" }}>
+      <FontStyles />
+      <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at 50% 20%, rgba(76,124,243,0.10), transparent 60%)" }} />
+      <div className="sv-fade-in" style={{ width: 400, maxWidth: "90vw", position: "relative", zIndex: 1 }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{
+            width: 64, height: 64, borderRadius: 18, margin: "0 auto 16px",
+            background: "linear-gradient(160deg, var(--surface-2), var(--surface-3))",
+            display: "flex", alignItems: "center", justifyContent: "center"
+          }}>
+            <ShieldCheck size={26} color="var(--primary)" />
+          </div>
+          <div className="sv-display" style={{ fontSize: 22, fontWeight: 700 }}>{title}</div>
+          <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>{subtitle}</div>
+        </div>
+        {body}
+      </div>
+    </div>
+  );
+  const linkBtn = (label, onClick) => (
+    <button type="button" onClick={onClick} disabled={busy}
+      style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline", padding: 6 }}>
+      {label}
+    </button>
+  );
+
+  const signIn = async () => {
+    setBusy(true); setError("");
+    try { await onSignIn(); } catch (e) { setError(friendlyAuthError(e)); }
+    setBusy(false);
+  };
+  const restore = async (e) => {
+    e.preventDefault();
+    if (!password) return;
+    setBusy(true); setError("");
+    await new Promise((r) => setTimeout(r, 30)); // let "Decrypting…" paint before the Argon2 work starts
+    const res = await onRestore(cloudEnv, password);
+    if (!res.ok) { setError(res.error); setBusy(false); }
+    // on success the gate unmounts (a vault now exists on this device)
+  };
+
+  if (localOnly) {
+    return <VaultSetupScreen onCreate={onCreate} serverStatus={serverStatus} dataFilePath={dataFilePath}
+      footerAction={linkBtn("Restore from a Google account instead", onUseCloud)} />;
+  }
+  if (phase === "new" && user) {
+    return <VaultSetupScreen onCreate={onCreate} serverStatus={serverStatus} dataFilePath={dataFilePath}
+      banner={`Signed in as ${user.email}. No cloud vault exists for this account yet — the vault you create now is encrypted on this device and backed up to your Google account.`}
+      footerAction={linkBtn("Use a different Google account", onSignOut)} />;
+  }
+  if (phase === "signin") {
+    return shell("Sign in to restore your vault",
+      "Use the Google account your vault was backed up with. Your data stays encrypted — Google never sees your master password.",
+      <>
+        <Card>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {error && <div style={{ color: "var(--coral)", fontSize: 12 }}>{error}</div>}
+            <Button size="md" onClick={signIn} disabled={busy}>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}><Globe size={15} />{busy ? "Waiting for Google…" : "Sign in with Google"}</span>
+            </Button>
+            <div style={{ fontSize: 11.5, color: "var(--text-faint)", lineHeight: 1.6 }}>
+              Only your encrypted vault is stored in the cloud, and only this Google account can read it. First time here? Sign in too — if there's nothing in the cloud yet you'll create your vault next.
+            </div>
+          </div>
+        </Card>
+        <div style={{ textAlign: "center", marginTop: 12 }}>{linkBtn("Skip — keep my vault on this device only", onChooseLocalOnly)}</div>
+      </>);
+  }
+  if (phase === "password" && user) {
+    return shell("Enter your master password",
+      `Signed in as ${user.email}. A cloud vault was found — enter its master password to decrypt and restore it on this device.`,
+      <>
+        <Card>
+          <form onSubmit={restore}>
+            <Field label="Master password">
+              <Input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setError(""); }} autoFocus disabled={busy} placeholder="Your vault's master password" />
+            </Field>
+            {error && <div style={{ color: "var(--coral)", fontSize: 12, marginBottom: 10 }}>{error}</div>}
+            <Button type="submit" size="md" disabled={busy || !password}>
+              <span style={{ display: "flex", alignItems: "center", gap: 7 }}>{busy ? "Decrypting vault…" : <>Restore vault <ChevronRight size={14} /></>}</span>
+            </Button>
+          </form>
+        </Card>
+        <div style={{ textAlign: "center", marginTop: 12 }}>{linkBtn("Use a different Google account", onSignOut)}</div>
+      </>);
+  }
+  if (phase === "error" && user) {
+    return shell("Couldn't reach your cloud vault", `Signed in as ${user.email}.`,
+      <>
+        <Card>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ color: "var(--coral)", fontSize: 12.5, lineHeight: 1.55 }}>{error}</div>
+            <Button size="md" onClick={() => setAttempt((n) => n + 1)}>Retry</Button>
+            <Button variant="subtle" size="md" onClick={() => setPhase("new")}>Create a vault on this device for now</Button>
+          </div>
+        </Card>
+        <div style={{ textAlign: "center", marginTop: 12 }}>{linkBtn("Use a different Google account", onSignOut)}</div>
+      </>);
+  }
+  return shell("SecureVault", authReady ? "Checking your cloud vault…" : "Loading…", null);
+}
+
 /* First-run screen: create the master password that will protect the vault. */
-function VaultSetupScreen({ onCreate, serverStatus, dataFilePath }) {
+function VaultSetupScreen({ onCreate, serverStatus, dataFilePath, banner, footerAction }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
@@ -1340,6 +1507,9 @@ function VaultSetupScreen({ onCreate, serverStatus, dataFilePath }) {
             No vault found yet{serverStatus === "connected" ? <> at <span className="sv-mono">{dataFilePath}</span></> : IS_ANDROID_APP ? " on this device" : ""}. Set a master password to encrypt it.
           </div>
         </div>
+        {banner && (
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", marginBottom: 12, lineHeight: 1.55 }}>{banner}</div>
+        )}
         <Card>
           <form onSubmit={submit}>
             <Field label="Master password">
@@ -1358,6 +1528,7 @@ function VaultSetupScreen({ onCreate, serverStatus, dataFilePath }) {
             </Button>
           </form>
         </Card>
+        {footerAction && <div style={{ textAlign: "center", marginTop: 12 }}>{footerAction}</div>}
       </div>
     </div>
   );
@@ -4967,6 +5138,15 @@ function SecurityCenter({ passwords, activity, sessions, onEndSession, onRestore
 /* Settings                                                               */
 /* ---------------------------------------------------------------------- */
 
+const CLOUD_STATUS_META = {
+  "signed-out": { label: "Not signed in", tone: "default" },
+  syncing: { label: "Syncing…", tone: "default" },
+  synced: { label: "Synced", tone: "mint" },
+  pending: { label: "Offline — will upload when online", tone: "amber" },
+  error: { label: "Sync error", tone: "coral" },
+  conflict: { label: "Needs your attention", tone: "amber" },
+};
+
 function SettingsSection({ title, children }) {
   return (
     <Card style={{ marginBottom: 16 }}>
@@ -5285,7 +5465,7 @@ function ImportVaultModal({ onCancel, onImport }) {
   );
 }
 
-function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessions, onEndSession, toast, onEraseLocalData, auth, onUpdateAccount, serverStatus, dataFilePath, onChangeMasterPassword, onSetupPin, onChangePin, onDisablePin, pinEnabled, onSetupBiometric, onDisableBiometric, biometricEnabled, biometricAvailable, biometricReason, onExportVault, onImportVault, onBackupNow, openModal }) {
+function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessions, onEndSession, toast, onEraseLocalData, auth, onUpdateAccount, serverStatus, dataFilePath, onChangeMasterPassword, onSetupPin, onChangePin, onDisablePin, pinEnabled, onSetupBiometric, onDisableBiometric, biometricEnabled, biometricAvailable, biometricReason, onExportVault, onImportVault, onBackupNow, openModal, cloud }) {
   const [confirmDeleteAcct, setConfirmDeleteAcct] = useState(false);
   const [confirmErase, setConfirmErase] = useState(false);
   const [confirmDisablePin, setConfirmDisablePin] = useState(false);
@@ -5297,6 +5477,8 @@ function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessi
   const [showExport, setShowExport] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [confirmDeleteCloud, setConfirmDeleteCloud] = useState(false);
+  const [cloudBusy, setCloudBusy] = useState(false);
 
   const [usernameDraft, setUsernameDraft] = useState(auth.username);
   const [emailDraft, setEmailDraft] = useState(auth.email);
@@ -5442,6 +5624,35 @@ function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessi
           </div>
         </SettingsSection>
 
+        {cloud && (
+          <SettingsSection title="Cloud sync">
+            <SettingRow label="Google account" sub={cloud.user ? `Signed in as ${cloud.user.email}` : "Sign in to back up your encrypted vault to the cloud and restore it on your other devices"}>
+              {cloud.user
+                ? <Button variant="subtle" size="sm" onClick={cloud.onSignOut}>Sign out</Button>
+                : <Button variant="subtle" size="sm" onClick={cloud.onSignIn}>Sign in with Google</Button>}
+            </SettingRow>
+            {cloud.user && (
+              <>
+                <SettingRow label="Status" sub={cloud.lastSync ? `Last synced ${new Date(cloud.lastSync).toLocaleString()}` : "Not synced yet"}>
+                  <Badge tone={(CLOUD_STATUS_META[cloud.status] || CLOUD_STATUS_META.syncing).tone}>{(CLOUD_STATUS_META[cloud.status] || CLOUD_STATUS_META.syncing).label}</Badge>
+                </SettingRow>
+                {cloud.error && cloud.status === "error" && (
+                  <div style={{ fontSize: 11.5, color: "var(--coral)", marginTop: -8 }}>{cloud.error}</div>
+                )}
+                <SettingRow label="Sync now" sub="Uploads changes made offline and checks for a newer version from another device">
+                  <Button variant="subtle" size="sm" disabled={cloudBusy} onClick={async () => { setCloudBusy(true); await cloud.onSyncNow(); setCloudBusy(false); }}>{cloudBusy ? "Syncing…" : "Sync now"}</Button>
+                </SettingRow>
+                <SettingRow label="Delete cloud copy" sub="Removes the encrypted vault from your Google account and signs out. The vault on this device is untouched">
+                  <Button variant="danger" size="sm" onClick={() => setConfirmDeleteCloud(true)}>Delete cloud copy</Button>
+                </SettingRow>
+              </>
+            )}
+            <div style={{ fontSize: 11.5, color: "var(--text-faint)", lineHeight: 1.6, marginTop: -4 }}>
+              Only the encrypted vault file is uploaded — your master password and plaintext never leave this device. Only the Google account that uploaded it can read it. PIN and biometric unlock stay on this device.
+            </div>
+          </SettingsSection>
+        )}
+
         <SettingsSection title="Data">
           <SettingRow label="Export vault" sub="Requires re-authentication — creates an encrypted file">
             <Button variant="subtle" size="sm" onClick={() => setShowExport(true)}>Export</Button>
@@ -5458,8 +5669,8 @@ function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessi
               else toast(result.error || "Backup failed.", "danger");
             }} disabled={backupBusy}>{backupBusy ? "Backing up…" : "Backup now"}</Button>
           </SettingRow>
-          <SettingRow label="Where is my data stored?" sub="Encrypted (AES-256-GCM) and saved as a real file on this PC — nothing is sent to any server on the internet">
-            <Badge tone="mint">Encrypted, local only</Badge>
+          <SettingRow label="Where is my data stored?" sub={cloud && cloud.user ? "Encrypted (AES-256-GCM), saved as a real file on this device and backed up to your Google account — the cloud only ever holds ciphertext" : "Encrypted (AES-256-GCM) and saved as a real file on this device — nothing is sent to any server unless you sign in with Google"}>
+            <Badge tone="mint">{cloud && cloud.user ? "Encrypted, local + cloud" : "Encrypted, local only"}</Badge>
           </SettingRow>
           {dataFilePath && (
             <div className="sv-mono" style={{ fontSize: 11, color: "var(--text-faint)", marginTop: -8 }}>{dataFilePath}</div>
@@ -5474,6 +5685,11 @@ function SettingsView({ settings, setSettings, theme, toggleTheme, onLock, sessi
         <ConfirmDialog title="Delete account" message="This will permanently delete your account and everything in your vault, including the encrypted file saved on this PC. This action cannot be undone."
           confirmLabel="Delete my account" danger onCancel={() => setConfirmDeleteAcct(false)}
           onConfirm={() => { setConfirmDeleteAcct(false); onEraseLocalData(); toast("Account deleted. All local data has been erased.", "success"); }} />
+      )}
+      {confirmDeleteCloud && (
+        <ConfirmDialog title="Delete cloud copy" message="This permanently removes the encrypted vault from your Google account and signs you out. The vault on this device stays as it is, but it will no longer be backed up until you sign in again."
+          confirmLabel="Delete cloud copy" danger onCancel={() => setConfirmDeleteCloud(false)}
+          onConfirm={async () => { setConfirmDeleteCloud(false); await cloud.onDeleteCloud(); }} />
       )}
       {confirmErase && (
         <ConfirmDialog title="Erase local data" message="This permanently deletes the encrypted vault file saved on this device. This cannot be undone."
@@ -5742,6 +5958,259 @@ export default function App() {
     setActivity((a) => [{ id: uid(), type, detail, ts: new Date().toISOString().slice(0, 10) }, ...a]);
   }, []);
 
+  // ======================= Cloud sync (Google account) =======================
+  // Local-first: the vault always saves to this device first. When signed in AND
+  // online it is also uploaded (debounced). Offline edits simply stay newer than
+  // the cloud copy and are uploaded by reconcileCloud() when the connection returns.
+  const [cloudUser, setCloudUser] = useState(null);
+  const [cloudAuthReady, setCloudAuthReady] = useState(false);
+  const [cloudStatus, setCloudStatus] = useState("signed-out");
+  const [cloudError, setCloudError] = useState("");
+  const [lastCloudSync, setLastCloudSyncState] = useState(getLastCloudSync());
+  const [cloudSyncReady, setCloudSyncReady] = useState(false); // uploads stay blocked until the first reconcile succeeds
+  const [cloudConflict, setCloudConflict] = useState(null);    // { kind: "different" | "newer", cloudEnv? }
+  const [localOnly, setLocalOnlyState] = useState(getLocalOnlyChoice());
+
+  const cloudUserRef = useRef(null);
+  const envelopeRef = useRef(null);
+  const lockedRef = useRef(true);
+  const persistRef = useRef(false);
+  const lastCloudUpdatedRef = useRef(""); // updatedAt of the cloud copy as we last saw / wrote it
+  const cloudTimer = useRef(null);
+  const reconcilingRef = useRef(false);
+  cloudUserRef.current = cloudUser;
+  envelopeRef.current = envelope;
+  lockedRef.current = locked;
+  persistRef.current = persistEnabled;
+
+  // Restore the saved Google session (async), then follow sign-in / sign-out.
+  useEffect(() => {
+    const unsub = watchCloudUser((u) => {
+      const prevUid = cloudUserRef.current ? cloudUserRef.current.uid : null;
+      const nextUid = u ? u.uid : null;
+      if (prevUid !== nextUid) {
+        setCloudSyncReady(false);
+        lastCloudUpdatedRef.current = "";
+      }
+      setCloudUser(u);
+      setCloudAuthReady(true);
+      setCloudError("");
+      setCloudStatus(u ? (navigator.onLine ? "syncing" : "pending") : "signed-out");
+    });
+    return () => unsub();
+  }, []);
+
+  const markSynced = (updatedAt) => {
+    lastCloudUpdatedRef.current = updatedAt;
+    if (cloudUserRef.current) setCloudBase(cloudUserRef.current.uid, updatedAt);
+    const ts = new Date().toISOString();
+    setLastCloudSync(ts);
+    setLastCloudSyncState(ts);
+    setCloudError("");
+    setCloudStatus("synced");
+  };
+  const failCloud = (e) => {
+    setCloudError(friendlyAuthError(e));
+    setCloudStatus(navigator.onLine ? "error" : "pending");
+  };
+
+  // Upload the envelope. Unless forced, refuse to overwrite a cloud copy that
+  // another device changed since we last looked.
+  const pushCloud = useCallback(async (env, { force = false } = {}) => {
+    if (!cloudUserRef.current || !env) return false;
+    if (!navigator.onLine) { setCloudStatus("pending"); return false; }
+    setCloudStatus("syncing");
+    try {
+      if (!force) {
+        const meta = await getCloudMeta();
+        if (meta && meta.updatedAt !== lastCloudUpdatedRef.current) {
+          setCloudConflict({ kind: "newer" });
+          setCloudStatus("conflict");
+          return false;
+        }
+      }
+      await uploadCloudVault(env);
+      markSynced(env.updatedAt);
+      return true;
+    } catch (e) {
+      failCloud(e);
+      return false;
+    }
+  }, []);
+
+  // Replace the local envelope with the cloud's (keeping this device's PIN /
+  // biometric wraps only if it is the very same vault, since they wrap the same key).
+  const adoptCloudEnvelope = useCallback(async (cloudEnv, localEnv) => {
+    const same = !!localEnv && !!localEnv.vaultId && localEnv.vaultId === cloudEnv.vaultId;
+    const merged = { ...cloudEnv, pin: same ? (localEnv.pin || null) : null, biometric: same ? (localEnv.biometric || null) : null };
+    envelopeRef.current = merged;
+    setEnvelope(merged);
+    if (persistRef.current) await saveEnvelope(merged);
+    markSynced(cloudEnv.updatedAt);
+  }, []);
+
+  // Compare this device's vault with the cloud copy and bring them level.
+  const reconcileCloud = useCallback(async () => {
+    const env = envelopeRef.current;
+    if (!cloudUserRef.current || !env) return;
+    if (!navigator.onLine) { setCloudStatus("pending"); return; }
+    if (reconcilingRef.current) return;
+    reconcilingRef.current = true;
+    setCloudStatus("syncing");
+    try {
+      const meta = await getCloudMeta();
+      if (!meta) { // nothing in the cloud yet -> first upload
+        if (await pushCloud(env, { force: true })) setCloudSyncReady(true);
+        return;
+      }
+      if (!env.vaultId || meta.vaultId !== env.vaultId) { // a different vault lives in the cloud
+        const cloudEnv = await downloadCloudVault();
+        setCloudConflict({ kind: "different", cloudEnv });
+        setCloudStatus("conflict");
+        return;
+      }
+      if (meta.updatedAt === env.updatedAt) { // already level
+        markSynced(meta.updatedAt);
+        setCloudSyncReady(true);
+        return;
+      }
+      // Decide using the cloud version this device last synced with (its "base").
+      const base = getCloudBase(cloudUserRef.current.uid);
+      const cloudChanged = !base || meta.updatedAt !== base;
+      const localChanged = !base || env.updatedAt !== base;
+      let action;
+      if (base && cloudChanged && localChanged) action = "both";      // edited on both sides since the last sync
+      else if (!base) action = meta.updatedAt > env.updatedAt ? "pull" : "push";
+      else if (cloudChanged) action = "pull";                         // only another device changed it
+      else action = "push";                                           // only this device changed it (e.g. offline edits)
+
+      if (action === "push") {
+        lastCloudUpdatedRef.current = meta.updatedAt;
+        if (await pushCloud(env, { force: true })) setCloudSyncReady(true);
+        return;
+      }
+      const cloudEnv = await downloadCloudVault();
+      if (!cloudEnv) return;
+      if (action === "pull" && lockedRef.current) {
+        await adoptCloudEnvelope(cloudEnv, env);
+        toast("Loaded a newer version of your vault from the cloud.", "success");
+        setCloudSyncReady(true);
+      } else {
+        setCloudConflict({ kind: action === "both" ? "both" : "newer", cloudEnv });
+        setCloudStatus("conflict");
+      }
+    } catch (e) {
+      failCloud(e);
+    } finally {
+      reconcilingRef.current = false;
+    }
+  }, [pushCloud, adoptCloudEnvelope, toast]);
+
+  // Reconcile after boot / sign-in, and every time the vault locks (the one moment
+  // it is safe to swap in a newer cloud copy).
+  useEffect(() => {
+    if (!booted || !cloudAuthReady || !cloudUser || !envelope) return;
+    reconcileCloud();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booted, cloudAuthReady, cloudUser && cloudUser.uid, locked, !!envelope]);
+
+  // Debounced upload after each local save.
+  useEffect(() => {
+    if (!cloudUser || !envelope || !cloudSyncReady) return undefined;
+    if (envelope.updatedAt === lastCloudUpdatedRef.current) return undefined;
+    setCloudStatus(navigator.onLine ? "syncing" : "pending");
+    clearTimeout(cloudTimer.current);
+    cloudTimer.current = setTimeout(() => { pushCloud(envelopeRef.current); }, 2500);
+    return () => clearTimeout(cloudTimer.current);
+  }, [envelope, cloudUser, cloudSyncReady, pushCloud]);
+
+  // Connection dropped / came back: queue, then flush automatically.
+  useEffect(() => {
+    const goOnline = () => { if (cloudUserRef.current && envelopeRef.current) reconcileCloud(); };
+    const goOffline = () => { if (cloudUserRef.current) setCloudStatus("pending"); };
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => { window.removeEventListener("online", goOnline); window.removeEventListener("offline", goOffline); };
+  }, [reconcileCloud]);
+
+  // Fresh device: Google login -> master password -> decrypt the cloud vault -> unlocked.
+  const handleRestoreFromCloud = async (cloudEnv, password) => {
+    let unlocked;
+    try {
+      unlocked = await unlockWithPasswordEnvelope(cloudEnv, password);
+    } catch {
+      return { ok: false, error: "Incorrect master password for this Google account's vault." };
+    }
+    const env = { ...cloudEnv, pin: null, biometric: null, vaultId: cloudEnv.vaultId || newVaultId() };
+    vaultKeyRef.current = unlocked.vaultKeyBytes;
+    envelopeRef.current = env;
+    setEnvelope(env);
+    loadDecryptedIntoState(unlocked.data);
+    setLocked(false);
+    markSynced(cloudEnv.updatedAt);
+    if (persistRef.current) await saveEnvelope(env);
+    toast("Vault restored from your Google account.", "success");
+    return { ok: true };
+  };
+
+  const resolveCloudConflict = async (choice) => {
+    const c = cloudConflict;
+    setCloudConflict(null);
+    if (!c) return;
+    try {
+      if (choice === "cloud") {
+        const cloudEnv = c.cloudEnv || await downloadCloudVault();
+        if (!cloudEnv) return;
+        await adoptCloudEnvelope(cloudEnv, envelopeRef.current);
+        if (!lockedRef.current) handleLock();
+        setCloudSyncReady(true);
+        toast("Cloud vault loaded. Unlock it with its master password.", "success");
+      } else if (await pushCloud(envelopeRef.current, { force: true })) {
+        setCloudSyncReady(true);
+        toast("This device's vault is now the cloud copy.", "success");
+      }
+    } catch (e) {
+      failCloud(e);
+      toast(friendlyAuthError(e), "danger");
+    }
+  };
+
+  const handleCloudSignOut = async () => {
+    try { await cloudSignOut(); } catch { /* ignore */ }
+    setCloudConflict(null);
+    toast("Signed out of Google. Your vault stays on this device.", "success");
+  };
+
+  const cloudProps = {
+    user: cloudUser,
+    status: cloudStatus,
+    error: cloudError,
+    lastSync: lastCloudSync,
+    onSignIn: async () => {
+      try {
+        await cloudSignIn();
+        setLocalOnlyChoice(false);
+        setLocalOnlyState(false);
+        toast("Signed in with Google.", "success");
+      } catch (e) { toast(friendlyAuthError(e), "danger"); }
+    },
+    onSignOut: handleCloudSignOut,
+    onSyncNow: async () => {
+      if (!navigator.onLine) { toast("You're offline — changes upload automatically when you're back online.", "info"); return; }
+      setCloudConflict(null);
+      await reconcileCloud();
+    },
+    onDeleteCloud: async () => {
+      try {
+        const uid = cloudUserRef.current ? cloudUserRef.current.uid : null;
+        await deleteCloudVault();
+        if (uid) setCloudBase(uid, "");
+        await cloudSignOut();
+        toast("Cloud copy deleted. Your vault stays on this device.", "success");
+      } catch (e) { toast(friendlyAuthError(e), "danger"); }
+    },
+  };
+
   // ---- Boot: load the encrypted envelope ---------------------------------
   // Desktop reads it through the local server; Android reads the vault file
   // straight off the device, since there is no server running on a phone.
@@ -5750,9 +6219,10 @@ export default function App() {
     (async () => {
       if (isAndroidRuntime()) {
         setDataFilePath(ANDROID_DATA_PATH);
-        const { envelope: env } = await loadEnvelope();
+        const { envelope: env0 } = await loadEnvelope();
+        const env = await ensureVaultId(env0);
         if (cancelled) return;
-        setEnvelope(env); // null => VaultSetupScreen will be shown
+        setEnvelope(env); // null => cloud gate / VaultSetupScreen will be shown
         setServerStatus("offline");
         setBooted(true);
         return;
@@ -5766,9 +6236,11 @@ export default function App() {
       }
       setServerStatus("connected");
       setDataFilePath(ping.dataFile || "D:\\Local Data\\securevault-data.json");
-      const { envelope: env, integrity } = await loadEnvelope();
+      const { envelope: env0, integrity } = await loadEnvelope();
+      // Never write to a file the integrity check has flagged — resolve that first.
+      const env = (!integrity || integrity.status === "ok") ? await ensureVaultId(env0) : env0;
       if (cancelled) return;
-      setEnvelope(env); // null => VaultSetupScreen will be shown
+      setEnvelope(env); // null => cloud gate / VaultSetupScreen will be shown
       if (env && integrity && integrity.status !== "ok") setIntegrityIssue(integrity);
       setBooted(true);
     })();
@@ -6273,6 +6745,8 @@ export default function App() {
     if (persistEnabled) await deleteEnvelope();
     vaultKeyRef.current = null;
     setEnvelope(null);
+    setCloudSyncReady(false);
+    lastCloudUpdatedRef.current = "";
     setPasswords([]); setNotes([]); setTransactions([]); setBudgets([]); setGoals([]); setGeneralSavings({ balance: 0, history: [] }); setSavingsAdjustment(0); setEvents([]); setContacts([]); setTrash([]); setActivity([]); setSessions([]);
     setSettings(DEFAULT_SETTINGS); setAuth(DEFAULT_AUTH);
     setLocked(true);
@@ -6390,10 +6864,11 @@ export default function App() {
   const importVault = async (importedEnvelope, password) => {
     try {
       const { vaultKeyBytes, data } = await unlockWithPasswordEnvelope(importedEnvelope, password);
+      const imported = importedEnvelope.vaultId ? importedEnvelope : { ...importedEnvelope, vaultId: newVaultId() };
       vaultKeyRef.current = vaultKeyBytes;
-      setEnvelope(importedEnvelope);
+      setEnvelope(imported);
       loadDecryptedIntoState(data);
-      if (persistEnabled) await saveEnvelope(importedEnvelope);
+      if (persistEnabled) await saveEnvelope(imported);
       logActivity("security_change", "Imported vault from backup file");
       return { ok: true };
     } catch {
@@ -6527,8 +7002,41 @@ export default function App() {
     return <BootScreen serverStatus={serverStatus} />;
   }
 
+  const cloudConflictDialog = cloudConflict && (
+    <ConfirmDialog
+      title={cloudConflict.kind === "different" ? "Cloud vault found" : cloudConflict.kind === "both" ? "Changes on both sides" : "Newer version in the cloud"}
+      message={cloudConflict.kind === "different"
+        ? `Your Google account (${cloudUser ? cloudUser.email : ""}) already has a different vault in the cloud than the one on this device. Use the cloud vault (it replaces the vault on this device, and you'll unlock it with its master password), or keep this device's vault and overwrite the cloud copy?`
+        : cloudConflict.kind === "both"
+          ? "Your vault was changed on this device AND in the cloud since they last synced. Load the cloud version (replaces this device's copy), or keep this device's version and overwrite the cloud copy? Whichever you don't pick is lost, so export a backup first if unsure."
+          : "Another device saved a newer version of your vault to the cloud. Load it now (this locks the vault and replaces this device's copy), or keep this device's version and overwrite the cloud copy?"}
+      confirmLabel={cloudConflict.kind === "different" ? "Use cloud vault" : "Load cloud version"}
+      secondaryLabel="Keep this device's"
+      onConfirm={() => resolveCloudConflict("cloud")}
+      onSecondary={() => resolveCloudConflict("local")}
+      onCancel={() => setCloudConflict(null)}
+    />
+  );
+
   if (!envelope) {
-    return <VaultSetupScreen onCreate={handleCreateVault} serverStatus={serverStatus} dataFilePath={dataFilePath} />;
+    return (
+      <>
+        <CloudGate
+          user={cloudUser}
+          authReady={cloudAuthReady}
+          localOnly={localOnly}
+          onSignIn={async () => { await cloudSignIn(); }}
+          onSignOut={handleCloudSignOut}
+          onRestore={handleRestoreFromCloud}
+          onCreate={handleCreateVault}
+          onChooseLocalOnly={() => { setLocalOnlyChoice(true); setLocalOnlyState(true); }}
+          onUseCloud={() => { setLocalOnlyChoice(false); setLocalOnlyState(false); }}
+          serverStatus={serverStatus}
+          dataFilePath={dataFilePath}
+        />
+        <ToastStack toasts={toasts} dismiss={dismissToast} />
+      </>
+    );
   }
 
   if (locked) {
@@ -6552,6 +7060,8 @@ export default function App() {
             onReview={resolveIntegrityReview}
           />
         )}
+        {cloudConflictDialog}
+        <ToastStack toasts={toasts} dismiss={dismissToast} />
       </>
     );
   }
@@ -6598,7 +7108,7 @@ export default function App() {
           <SecurityCenter passwords={passwords} activity={activity} sessions={sessions} onEndSession={endSession} onRestoreVersion={restoreVersionByFile} serverStatus={serverStatus} lastRestoreUndo={lastRestoreUndo} onUndoRestore={undoLastRestore} openModal={openModal} />
         )}
         {view === "settings" && (
-          <SettingsView settings={settings} setSettings={setSettings} theme={theme} toggleTheme={() => setTheme((t) => t === "dark" ? "light" : "dark")} onLock={handleLock} sessions={sessions} onEndSession={endSession} toast={toast} onEraseLocalData={eraseLocalData} auth={auth} onUpdateAccount={updateAccount} serverStatus={serverStatus} dataFilePath={dataFilePath} onChangeMasterPassword={changeMasterPassword} onSetupPin={setupPin} onChangePin={changePin} onDisablePin={disablePin} pinEnabled={!!envelope?.pin} onSetupBiometric={setupBiometric} onDisableBiometric={disableBiometric} biometricEnabled={!!envelope?.biometric} biometricAvailable={biometricAvailable} biometricReason={biometricReason} onExportVault={exportVault} onImportVault={importVault} onBackupNow={backupNow} openModal={openModal} />
+          <SettingsView settings={settings} setSettings={setSettings} theme={theme} toggleTheme={() => setTheme((t) => t === "dark" ? "light" : "dark")} onLock={handleLock} sessions={sessions} onEndSession={endSession} toast={toast} onEraseLocalData={eraseLocalData} auth={auth} onUpdateAccount={updateAccount} serverStatus={serverStatus} dataFilePath={dataFilePath} onChangeMasterPassword={changeMasterPassword} onSetupPin={setupPin} onChangePin={changePin} onDisablePin={disablePin} pinEnabled={!!envelope?.pin} onSetupBiometric={setupBiometric} onDisableBiometric={disableBiometric} biometricEnabled={!!envelope?.biometric} biometricAvailable={biometricAvailable} biometricReason={biometricReason} onExportVault={exportVault} onImportVault={importVault} onBackupNow={backupNow} openModal={openModal} cloud={cloudProps} />
         )}
       </div>
 
@@ -6739,6 +7249,7 @@ export default function App() {
         />
       )}
 
+      {cloudConflictDialog}
       <ToastStack toasts={toasts} dismiss={dismissToast} />
     </div>
   );

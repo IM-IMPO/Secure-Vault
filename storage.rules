@@ -1,0 +1,27 @@
+rules_version = '2';
+
+// SecureVault — Firebase Storage security rules.
+// Each Google account can read/write ONLY its own vault object: vaults/<uid>/vault.json
+// Everything else is closed. (The object is already end-to-end encrypted with the
+// master password; these rules additionally make it unreachable to anyone else.)
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    match /vaults/{uid}/vault.json {
+      allow read: if request.auth != null
+                  && request.auth.uid == uid;
+
+      allow create, update: if request.auth != null
+                            && request.auth.uid == uid
+                            && request.resource.size < 60 * 1024 * 1024
+                            && request.resource.contentType == 'application/json';
+
+      allow delete: if request.auth != null
+                    && request.auth.uid == uid;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

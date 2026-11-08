@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "704056195218",
+    "project_id": "vault-b3bfb",
+    "storage_bucket": "vault-b3bfb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:704056195218:android:5941f88daa4eab24c8ce4b",
+        "android_client_info": {
+          "package_name": "com.imimpo.securevault"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "704056195218-b0j14e7keh5e09ggum52oi1oqv51pk58.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.imimpo.securevault",
+            "certificate_hash": "a577a2dc532ddc51f26bb1c718ca219beea6b0f5"
+          }
+        },
+        {
+          "client_id": "704056195218-v90bgi4h2lk7p60trs1vnp9rna7bu3l6.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDuOsTdK5MVldNAGUrMMSNPCMJiXsKs4Qs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "704056195218-v90bgi4h2lk7p60trs1vnp9rna7bu3l6.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

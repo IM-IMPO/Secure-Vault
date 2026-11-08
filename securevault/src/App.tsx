@@ -1,144 +1,171 @@
-/**
- * SecureVault — Main App
- *
- * Integrates:
- *   - CloudLoginScreen (first-run import screen)
- *   - Firebase auth state listener
- *   - Cloud sync status with manual sync trigger
- *
- * Flow:
- *   1. On first launch: show CloudLoginScreen
- *   2. User imports from cloud OR creates new vault OR skips cloud
- *   3. Main app loads with local vault
- *   4. Background sync keeps local + cloud in sync
- *   5. User can manually trigger "Sync now" from the toolbar
- */
-import React, { useState, useEffect } from 'react';
-// @ts-ignore
+import React, { useEffect, useState } from 'react';
 import CloudLoginScreen from './components/CloudLoginScreen';
-// @ts-ignore
-import { isLoggedIn, getUserEmail, signOut } from './lib/firebase.js';
-// @ts-ignore
+import { getAuthState, getUserEmail, signOut } from './lib/firebase.js';
 import { watchNetwork, getLastSyncTime, hasPendingSync, fullSync, pushToQueue } from './lib/cloudSync.js';
 
-/**
- * App — SecureVault main component
- *
- * The app starts in "cloud setup" mode if:
- *   - No Firebase user is signed in AND
- *   - No local vault exists AND
- *   - A vault hasn't been created yet
- *
- * Otherwise, the main vault UI loads.
- */
 const App: React.FC = () => {
-  const [showCloudSetup, setShowCloudSetup] = useState<boolean | null>(null);
-  const [syncStatus, setSyncStatus] = useState<string>('initializing');
+  const [authReady, setAuthReady] = useState(false);
+  const [firebaseUser, setFirebaseUser] = useState<any>(null);
+  const [vaultUnlocked, setVaultUnlocked] = useState(false);
+  const [masterPassword, setMasterPassword] = useState('');
+  const [syncStatus, setSyncStatus] = useState('initializing');
   const [lastSync, setLastSync] = useState<string | null>(null);
-  const [pendingSync, setPendingSync] = useState<boolean>(false);
-  const [manualSyncLoading, setManualSyncLoading] = useState<boolean>(false);
-  const [syncCount, setSyncCount] = useState<number>(0);
-  const [masterPassword, setMasterPassword] = useState<string>('');
-  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [pendingSync, setPendingSync] = useState(false);
+  const [manualSyncLoading, setManualSyncLoading] = useState(false);
+  const [syncCount, setSyncCount] = useState(0);
 
-  // Check if we should show cloud setup
+  // Firebase login is NOT the same thing as unlocking the vault.
   useEffect(() => {
-    const isAuthReady = isLoggedIn();
-    if (!isAuthReady) {
-      setShowCloudSetup(true);
-    } else {
-      setShowCloudSetup(false);
-    }
+    const unsubscribe = getAuthState((user: any) => {
+      setFirebaseUser(user);
+      setAuthReady(true);
+
+      if (!user) {
+        setVaultUnlocked(false);
+        setMasterPassword('');
+      }
+    });
+
+    return unsubscribe;
   }, []);
 
-  // Watch network status
   useEffect(() => {
     const unsubscribe = watchNetwork((online: boolean) => {
       setSyncStatus(online ? 'online' : 'offline');
     });
+
     return () => unsubscribe();
   }, []);
 
-  // Check last sync time and pending sync
   useEffect(() => {
     const last = getLastSyncTime();
-    if (last) setLastSync(last);
+
+    if (last) {
+      setLastSync(last);
+    }
+
     setPendingSync(hasPendingSync());
   }, []);
 
-  // Trigger manual sync
   const handleManualSync = async () => {
+    if (!masterPassword || !firebaseUser) return;
+
     setManualSyncLoading(true);
-    setSyncCount(c => c + 1);
+    setSyncCount((c) => c + 1);
+
     try {
-      const userId = getUserEmail() ?? 'unknown-user';
-      const result = await fullSync({}, userId);
-      setLastSync(result?.updatedAt || new Date().toISOString());
+      const userId =
+        firebaseUser.uid ||
+        getUserEmail() ||
+        'unknown-user';
+
+      const result = await fullSync(
+        {},
+        userId,
+        null,
+        masterPassword
+      );
+
+      setLastSync(
+        result?.updatedAt ||
+        new Date().toISOString()
+      );
+
       setPendingSync(false);
       setSyncStatus('online');
-    } catch (err: any) {
-      setSyncStatus('error');
+    } catch (err) {
       console.error('Manual sync failed:', err);
+      setSyncStatus('error');
     } finally {
       setManualSyncLoading(false);
     }
   };
 
-  // Auto-sync when offline->online transition occurs
   useEffect(() => {
     const handleOnline = () => {
-      if (syncStatus === 'online' && hasPendingSync()) {
-        pushToQueue({ type: 'auto-sync', retry: true });
+      if (hasPendingSync()) {
+        pushToQueue({
+          type: 'auto-sync',
+          retry: true
+        });
       }
     };
-    window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
-  }, [syncStatus]);
 
-  if (showCloudSetup === true) {
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
+  }, []);
+
+  if (!authReady) {
+    return (
+      <div className="cloud-login-screen">
+        <div className="cloud-login-card">
+          <h2>SecureVault</h2>
+          <p className="cloud-message">
+            Checking your secure session...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // IMPORTANT:
+  // A remembered Google login CANNOT bypass the master password.
+  if (!vaultUnlocked) {
     return (
       <CloudLoginScreen
-        onLoginComplete={() => setShowCloudSetup(false)}
-        initialMode="import"
+        onLoginComplete={(password: string) => {
+          setMasterPassword(password);
+          setVaultUnlocked(true);
+        }}
       />
     );
   }
 
-  // Show main vault UI (placeholder + sync controls)
   return (
     <div className="sv-root">
       <header className="sv-header">
         <div className="sv-header-left">
           <h1 className="sv-logo">SecureVault</h1>
+
           <p className="sv-tagline">
-            {syncStatus === 'online' ? 'Cloud synced' :
-             syncStatus === 'offline' ? 'Offline — will sync soon' :
-             'Setting up sync...'}
+            {syncStatus === 'online'
+              ? 'Cloud synced'
+              : syncStatus === 'offline'
+              ? 'Offline — will sync soon'
+              : syncStatus === 'error'
+              ? 'Sync error'
+              : 'Setting up sync...'}
           </p>
         </div>
+
         <div className="sv-header-right">
           {lastSync && (
             <span className="sv-sync-time">
               Last sync: {new Date(lastSync).toLocaleString()}
             </span>
           )}
-          {pendingSync && <span className="sv-sync-badge">Sync pending</span>}
+
+          {pendingSync && (
+            <span className="sv-sync-badge">
+              Sync pending
+            </span>
+          )}
+
           <button
             className="sv-sync-btn"
             onClick={handleManualSync}
-            disabled={manualSyncLoading || syncStatus === 'offline'}
+            disabled={
+              manualSyncLoading ||
+              syncStatus === 'offline'
+            }
           >
             {manualSyncLoading ? (
               <span className="sv-spinner">&#8635;</span>
             ) : (
-              <>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="23 4 23 10 17 10" />
-                  <polyline points="1 20 1 14 7 14" />
-                  <line x1="12" y1="18" x2="21" y2="18" />
-                </svg>
-                {syncCount > 0 ? `Sync #${syncCount}` : 'Sync now'}
-              </>
+              `Sync ${syncCount > 0 ? `#${syncCount}` : 'now'}`
             )}
           </button>
         </div>
@@ -146,33 +173,10 @@ const App: React.FC = () => {
 
       <main className="sv-main">
         <div className="sv-placeholder">
-          <h2>Sync Ready</h2>
+          <h2>SecureVault Unlocked</h2>
+
           <p>
-            Your vault is encrypted and stored locally. Use <strong>Sync now</strong>
-            to upload it to the cloud. It is only accessible with your Gmail
-            account and master password.
-          </p>
-          <div className="cloud-password-row" style={{ maxWidth: 420, margin: '16px auto' }}>
-            <input
-              type={showPassword ? 'text' : 'password'}
-              placeholder="Enter master password"
-              value={masterPassword}
-              onChange={(e) => setMasterPassword(e.target.value)}
-              disabled={manualSyncLoading}
-              className="cloud-password-input"
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword(!showPassword)}
-              className="cloud-password-toggle"
-              disabled={manualSyncLoading}
-            >
-              {showPassword ? 'Hide' : 'Show'}
-            </button>
-          </div>
-          <p className="sv-hint">
-            {syncStatus === 'offline' && 'No internet connection — will sync automatically when you reconnect.'}
-            {syncStatus === 'online' && 'All changes are being synced in the background.'}
+            Your vault has been unlocked with your master password.
           </p>
         </div>
       </main>
@@ -183,7 +187,8 @@ const App: React.FC = () => {
             className="sv-signout-btn"
             onClick={async () => {
               await signOut();
-              setShowCloudSetup(true);
+              setVaultUnlocked(false);
+              setMasterPassword('');
             }}
           >
             Sign out
