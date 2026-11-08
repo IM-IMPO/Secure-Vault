@@ -700,124 +700,23 @@ const CONTACT_CATEGORY_COLORS = {
   Family: "#F472B6", Friend: "#34D399", Work: "#F5A623", Business: "#4C7CF3", Other: "#94A3B8",
 };
 
-const initialPasswords = [
-  { id: uid(), title: "Google", url: "https://google.com", username: "j.reyes@gmail.com", password: "Sunrise!482x", category: "Email", tags: ["primary"], notes: "", createdAt: daysAgo(340), updatedAt: daysAgo(340) },
-  { id: uid(), title: "BPI Online", url: "https://bpi.com.ph", username: "jreyes_bpi", password: "MangoTree!91", category: "Banking", tags: ["finance"], notes: "", createdAt: daysAgo(210), updatedAt: daysAgo(12) },
-  { id: uid(), title: "GitHub", url: "https://github.com", username: "jreyes-dev", password: "correcthorsebattery9", category: "Development", tags: ["work"], notes: "SSH key stored separately", createdAt: daysAgo(500), updatedAt: daysAgo(500) },
-  { id: uid(), title: "Instagram", url: "https://instagram.com", username: "@j.reyes", password: "correcthorsebattery9", category: "Social Media", tags: [], notes: "", createdAt: daysAgo(600), updatedAt: daysAgo(600) },
-  { id: uid(), title: "Shopee", url: "https://shopee.ph", username: "jreyes09", password: "shopee123", category: "Shopping", tags: [], notes: "", createdAt: daysAgo(120), updatedAt: daysAgo(120) },
-  { id: uid(), title: "Steam", url: "https://store.steampowered.com", username: "jreyes_gg", password: "Falcon#Nebula77Q", category: "Gaming", tags: [], notes: "", createdAt: daysAgo(90), updatedAt: daysAgo(3) },
-  { id: uid(), title: "Notion (Work)", url: "https://notion.so", username: "j.reyes@work.com", password: "shopee123", category: "Work", tags: ["team"], notes: "", createdAt: daysAgo(60), updatedAt: daysAgo(60) },
-];
+const initialPasswords = [];
 
-const initialNotes = [
-  { id: uid(), title: "2FA Recovery Codes — Google", content: "Backup codes for account recovery. Store printed copy in safe at home.\n\n1. 48213-99021\n2. 77102-33847\n3. 55901-12456", category: "Recovery Codes", tags: ["google", "2fa"], pinned: true, archived: false, createdAt: daysAgo(300), updatedAt: daysAgo(300) },
-  { id: uid(), title: "Home Wi-Fi", content: "Network: Reyes_5G\nPassword: not stored in plaintext here — see password manager entry.", category: "Wi-Fi", tags: ["home"], pinned: true, archived: false, createdAt: daysAgo(150), updatedAt: daysAgo(20) },
-  { id: uid(), title: "Passport Number", content: "Passport no. and expiry — keep offline copy too. Renewal reminder set for next year.", category: "Documents", tags: ["travel"], pinned: false, archived: false, createdAt: daysAgo(400), updatedAt: daysAgo(400) },
-  { id: uid(), title: "Adobe CC License", content: "License key for Creative Cloud, tied to work email. Renews annually in March.", category: "Licenses", tags: ["work"], pinned: false, archived: false, createdAt: daysAgo(80), updatedAt: daysAgo(80) },
-  { id: uid(), title: "Old bank PINs (archived)", content: "Retired account, kept for records only.", category: "Other", tags: [], pinned: false, archived: true, createdAt: daysAgo(700), updatedAt: daysAgo(700) },
-];
+const initialNotes = [];
 
-const initialTransactions = [
-  { id: uid(), type: "income", amount: 65000, party: "Acme Corp Payroll", category: "Salary", date: daysAgo(2), description: "Monthly salary", recurring: true, method: "" },
-  { id: uid(), type: "income", amount: 8500, party: "Freelance client — Studio K", category: "Freelance", date: daysAgo(9), description: "Landing page project", recurring: false, method: "" },
-  { id: uid(), type: "expense", amount: 12000, party: "Landlord", category: "Rent", date: daysAgo(3), description: "Monthly rent", recurring: true, method: "Bank Transfer" },
-  { id: uid(), type: "expense", amount: 2450, party: "SM Supermarket", category: "Food", date: daysAgo(4), description: "Groceries", recurring: false, method: "Card" },
-  { id: uid(), type: "expense", amount: 1200, party: "Grab", category: "Transportation", date: daysAgo(5), description: "Rides this week", recurring: false, method: "E-wallet" },
-  { id: uid(), type: "expense", amount: 1800, party: "Meralco", category: "Bills", date: daysAgo(6), description: "Electricity", recurring: true, method: "Bank Transfer" },
-  { id: uid(), type: "expense", amount: 950, party: "Netflix + Spotify", category: "Entertainment", date: daysAgo(7), description: "Subscriptions", recurring: true, method: "Card" },
-  { id: uid(), type: "expense", amount: 3200, party: "Uniqlo", category: "Shopping", date: daysAgo(11), description: "New jacket", recurring: false, method: "Card" },
-  { id: uid(), type: "expense", amount: 1500, party: "Clinic visit", category: "Health", date: daysAgo(14), description: "Checkup", recurring: false, method: "Cash" },
-  { id: uid(), type: "income", amount: 3000, party: "Dividend — index fund", category: "Investment", date: daysAgo(18), description: "Quarterly payout", recurring: false, method: "" },
-  { id: uid(), type: "expense", amount: 2200, party: "Food delivery", category: "Food", date: daysAgo(20), description: "Various", recurring: false, method: "E-wallet" },
-  { id: uid(), type: "expense", amount: 4500, party: "Course platform", category: "Education", date: daysAgo(35), description: "UX course", recurring: false, method: "Card" },
-  { id: uid(), type: "income", amount: 65000, party: "Acme Corp Payroll", category: "Salary", date: daysAgo(33), description: "Monthly salary", recurring: true, method: "" },
-  { id: uid(), type: "expense", amount: 12000, party: "Landlord", category: "Rent", date: daysAgo(34), description: "Monthly rent", recurring: true, method: "Bank Transfer" },
-  { id: uid(), type: "expense", amount: 2100, party: "Gas station", category: "Transportation", date: daysAgo(40), description: "Fuel", recurring: false, method: "Card" },
-];
+const initialTransactions = [];
 
-const initialBudgets = [
-  { id: uid(), category: "Food", amount: 5000, period: "monthly" },
-  { id: uid(), category: "Transportation", amount: 3000, period: "monthly" },
-  { id: uid(), category: "Entertainment", amount: 1500, period: "monthly" },
-  { id: uid(), category: "Shopping", amount: 4000, period: "monthly" },
-];
+const initialBudgets = [];
 
-const initialGoals = [
-  {
-    id: uid(), title: "New Laptop", category: "Gadget", targetAmount: 65000, currentAmount: 24000,
-    targetDate: daysFromNow(90), notes: "16GB RAM, for work and editing.", createdAt: daysAgo(60),
-    contributions: [
-      { id: uid(), amount: 15000, date: daysAgo(55), note: "Initial deposit" },
-      { id: uid(), amount: 9000, date: daysAgo(20), note: "From freelance payout" },
-    ],
-  },
-  {
-    id: uid(), title: "Emergency Fund", category: "Emergency Fund", targetAmount: 100000, currentAmount: 42000,
-    targetDate: daysFromNow(240), notes: "Aiming for ~2 months of expenses.", createdAt: daysAgo(150),
-    contributions: [
-      { id: uid(), amount: 30000, date: daysAgo(140), note: "" },
-      { id: uid(), amount: 12000, date: daysAgo(45), note: "" },
-    ],
-  },
-  {
-    id: uid(), title: "Boracay Trip", category: "Travel", targetAmount: 20000, currentAmount: 20000,
-    targetDate: daysFromNow(-10), notes: "Flights + 3 nights.", createdAt: daysAgo(120),
-    contributions: [
-      { id: uid(), amount: 20000, date: daysAgo(15), note: "Fully funded!" },
-    ],
-  },
-];
+const initialGoals = [];
 
-const initialEvents = [
-  { id: uid(), title: "Rent due", date: daysFromNow(2), time: "", endTime: "", category: "Bill", location: "", notes: "Monthly rent — bank transfer", allDay: true, recurrence: "monthly", completedDates: [], createdAt: daysAgo(30) },
-  { id: uid(), title: "Team standup", date: daysFromNow(1), time: "09:00", endTime: "09:30", category: "Work", location: "Google Meet", notes: "", allDay: false, recurrence: "none", completedDates: [], createdAt: daysAgo(10) },
-  { id: uid(), title: "Dentist appointment", date: daysFromNow(5), time: "14:00", endTime: "15:00", category: "Appointment", location: "Makati Dental Clinic", notes: "Bring previous x-ray", allDay: false, recurrence: "none", completedDates: [], createdAt: daysAgo(7) },
-  { id: uid(), title: "Mom's birthday", date: "2026-09-11", time: "", endTime: "", category: "Birthday", location: "", notes: "Get a cake", allDay: true, recurrence: "yearly", completedDates: [], createdAt: daysAgo(90) },
-  { id: uid(), title: "Netflix payment", date: "2026-08-05", time: "", endTime: "", category: "Bill", location: "", notes: "", allDay: true, recurrence: "monthly", completedDates: ["2026-08-05"], createdAt: daysAgo(200) },
-  { id: uid(), title: "Project deadline — Studio K", date: daysFromNow(4), time: "18:00", endTime: "", category: "Work", location: "", notes: "Final delivery", allDay: false, recurrence: "none", completedDates: [], createdAt: daysAgo(20) },
-  { id: uid(), title: "Grocery run", date: daysFromNow(0), time: "17:30", endTime: "", category: "Personal", location: "SM Supermarket", notes: "", allDay: false, recurrence: "none", completedDates: [daysFromNow(0)], createdAt: daysAgo(2) },
-];
+const initialEvents = [];
 
-const initialContacts = [
-  {
-    id: uid(), name: "Maria Reyes", category: "Family", phone: "+63 917 555 0132", email: "maria.reyes@gmail.com",
-    company: "", jobTitle: "", tags: ["mom"], notes: "Birthday is in August.", favorite: true,
-    avatar: null, banner: null, createdAt: daysAgo(300), updatedAt: daysAgo(300),
-  },
-  {
-    id: uid(), name: "Studio K — Anna", category: "Work", phone: "+63 918 222 4471", email: "anna@studiok.ph",
-    company: "Studio K", jobTitle: "Creative Director", tags: ["client"], notes: "Main contact for the landing page project.", favorite: true,
-    avatar: null, banner: null, createdAt: daysAgo(60), updatedAt: daysAgo(9),
-  },
-  {
-    id: uid(), name: "Jom Dela Cruz", category: "Friend", phone: "+63 919 887 6655", email: "jom.delacruz@yahoo.com",
-    company: "", jobTitle: "", tags: [], notes: "", favorite: false,
-    avatar: null, banner: null, createdAt: daysAgo(500), updatedAt: daysAgo(500),
-  },
-  {
-    id: uid(), name: "Makati Dental Clinic", category: "Business", phone: "+63 2 8888 1234", email: "appointments@makatidental.ph",
-    company: "Makati Dental Clinic", jobTitle: "", tags: ["health"], notes: "Ask for Dra. Santos.", favorite: false,
-    avatar: null, banner: null, createdAt: daysAgo(200), updatedAt: daysAgo(200),
-  },
-];
+const initialContacts = [];
 
-const initialActivity = [
-  { id: uid(), type: "vault_unlocked", detail: "Vault unlocked", ts: daysAgo(0) },
-  { id: uid(), type: "login", detail: "Login from Chrome on Windows", ts: daysAgo(0) },
-  { id: uid(), type: "password_copied", detail: "Copied password for Steam", ts: daysAgo(3) },
-  { id: uid(), type: "password_updated", detail: "Updated password for BPI Online", ts: daysAgo(12) },
-  { id: uid(), type: "expense_recorded", detail: "Recorded expense — SM Supermarket", ts: daysAgo(4) },
-  { id: uid(), type: "income_recorded", detail: "Recorded income — Freelance client", ts: daysAgo(9) },
-  { id: uid(), type: "note_created", detail: "Created note — Adobe CC License", ts: daysAgo(80) },
-  { id: uid(), type: "login", detail: "Login from Safari on iPhone", ts: daysAgo(6) },
-];
+const initialActivity = [];
 
-const SESSIONS = [
-  { id: uid(), device: "Chrome on Windows", location: "Manila, PH", current: true, lastActive: "Active now" },
-  { id: uid(), device: "Safari on iPhone 15", location: "Manila, PH", current: false, lastActive: "6 days ago" },
-  { id: uid(), device: "Firefox on macOS", location: "Cebu, PH", current: false, lastActive: "21 days ago" },
-];
+const SESSIONS = [];
 
 /* ---------------------------------------------------------------------- */
 /* Password strength                                                      */
@@ -5851,7 +5750,7 @@ const DEFAULT_SETTINGS = {
   twoFA: true, biometric: false, autoLock: "5", securityNotifs: true,
   clipboardTimeout: "30", hideFinance: false, hideSensitive: true, showFinanceEditButtons: true,
 };
-const DEFAULT_AUTH = { username: "jreyes", email: "j.reyes@gmail.com", avatar: null };
+const DEFAULT_AUTH = { username: "", email: "", avatar: null };
 
 function BootScreen({ serverStatus }) {
   return (
